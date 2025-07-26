@@ -10,14 +10,14 @@ const orderRoutes = require('./routes/orderRoutes');
 
 const init = async () => {
   const server = Hapi.server({
-    port: 5000,
-    host: 'localhost',
-    routes: {
-      cors: {
-        origin: ['*'], // Memungkinkan akses dari semua origin (untuk pengujian)
-      },
+  port: process.env.PORT || 5000,
+  host: '0.0.0.0',
+  routes: {
+    cors: {
+      origin: ['*'],
     },
-  });
+  },
+});
 
   // Tambahkan route default (opsional, agar akses ke "/" tidak 404)
   server.route({
