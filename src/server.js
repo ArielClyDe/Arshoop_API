@@ -9,39 +9,44 @@ const materialRoutes = require('./routes/materialRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
 const init = async () => {
-  const server = Hapi.server({
-  port: process.env.PORT || 5000,
-  host: '0.0.0.0',
-  routes: {
-    cors: {
-      origin: ['*'],
-    },
-  },
-});
+  try {
+    console.log('🔄 Starting server...');
 
-  // Tambahkan route default (opsional, agar akses ke "/" tidak 404)
-  server.route({
-    method: 'GET',
-    path: '/',
-    handler: (request, h) => {
-      return {
-        message: 'API Buket ARSHOOP aktif 🚀',
-      };
-    },
-  });
+    const server = Hapi.server({
+      port: process.env.PORT || 5000,
+      host: '0.0.0.0',
+      routes: {
+        cors: {
+          origin: ['*'],
+        },
+      },
+    });
 
-  // Gabungkan semua routes dari file terpisah
-  server.route([
-    ...buketRoutes,
-    ...authRoutes,
-    ...cartRoutes,
-    ...materialRoutes,
-    ...orderRoutes
-  ]);
+    // Route default untuk root path
+    server.route({
+      method: 'GET',
+      path: '/',
+      handler: (request, h) => {
+        return {
+          message: 'API Buket ARSHOOP aktif 🚀',
+        };
+      },
+    });
 
-  // Mulai server
-  await server.start();
-  console.log(`✅ Server running at: ${server.info.uri}`);
+    // Gabungkan semua routes dari file terpisah
+    server.route([
+      ...buketRoutes,
+      ...authRoutes,
+      ...cartRoutes,
+      ...materialRoutes,
+      ...orderRoutes,
+    ]);
+
+    await server.start();
+    console.log(`✅ Server running at: ${server.info.uri}`);
+  } catch (err) {
+    console.error('❌ Error saat inisialisasi server:', err);
+  }
 };
 
 // Jalankan server
