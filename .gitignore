@@ -1,0 +1,4 @@
+# Folder dan file yang tidak perlu diupload ke GitHub
+node_modules/
+.env
+uploads/

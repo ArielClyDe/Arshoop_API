@@ -1,0 +1,80 @@
+const Joi = require('joi');
+const cartHandler = require('../handlers/cartHandler');
+
+module.exports = [
+  {
+    method: 'POST',
+    path: '/cart',
+    options: {
+      description: 'Tambah item ke keranjang',
+      tags: ['api'],
+      validate: {
+        payload: Joi.object({
+          userId: Joi.string().required(),
+          buketId: Joi.string().required(),
+          size: Joi.string().valid('small', 'medium', 'large').required(),
+          quantity: Joi.number().integer().min(1).required(),
+          customMaterials: Joi.array().items(
+            Joi.object({
+              materialId: Joi.string().required(),
+              quantity: Joi.number().integer().min(1).required()
+            })
+          ).optional()
+        }),
+      },
+    },
+    handler: cartHandler.addToCartHandler,
+  },
+  {
+    method: 'GET',
+    path: '/cart/{userId}',
+    options: {
+      description: 'Ambil semua item keranjang berdasarkan userId',
+      tags: ['api'],
+      validate: {
+        params: Joi.object({
+          userId: Joi.string().required(),
+        }),
+      },
+    },
+    handler: cartHandler.getCartByUserHandler,
+  },
+  {
+    method: 'DELETE',
+    path: '/cart/{cartId}',
+    options: {
+      description: 'Hapus item dari keranjang berdasarkan cartId',
+      tags: ['api'],
+      validate: {
+        params: Joi.object({
+          cartId: Joi.string().required(),
+        }),
+      },
+    },
+    handler: cartHandler.deleteCartItemHandler,
+  },
+  {
+    method: 'PUT',
+    path: '/cart/{cartId}',
+    options: {
+      description: 'Update item keranjang berdasarkan cartId',
+      tags: ['api'],
+      validate: {
+        params: Joi.object({
+          cartId: Joi.string().required()
+        }),
+        payload: Joi.object({
+          size: Joi.string().valid('small', 'medium', 'large').optional(),
+          quantity: Joi.number().integer().min(1).optional(),
+          customMaterials: Joi.array().items(
+            Joi.object({
+              materialId: Joi.string().required(),
+              quantity: Joi.number().integer().min(1).required()
+            })
+          ).optional()
+        }).min(1)
+      }
+    },
+    handler: cartHandler.updateCartItemHandler
+  }
+];
