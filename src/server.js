@@ -7,6 +7,7 @@ const authRoutes = require('./routes/authRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const materialRoutes = require('./routes/materialRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const testRoutes = require('./routes/testRoutes');
 
 const init = async () => {
   try {
@@ -40,6 +41,7 @@ const init = async () => {
       ...cartRoutes,
       ...materialRoutes,
       ...orderRoutes,
+      ...testRoutes
     ]);
 
     await server.start();

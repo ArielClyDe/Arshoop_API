@@ -1,4 +1,3 @@
-// src/routes/testRoutes.js
 const { testFirebaseHandler } = require('../handlers/testHAndler');
 
 module.exports = [
