@@ -12,6 +12,7 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+db.settings({ preferRest: true }); // 👈 ini penting
 
 // Fungsi untuk menambahkan buket ke koleksi 'buket'
 const addBuket = async (buketData) => {
@@ -27,7 +28,7 @@ const addMaterial = async (materialData) => {
   return docRef;
 };
 
-// FUngsi cart
+// Fungsi cart
 const addToCart = async (userId, item) => {
   const docRef = await db.collection('carts').add({
     userId,
