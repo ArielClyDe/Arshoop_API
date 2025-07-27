@@ -171,11 +171,11 @@ const getOrdersByUserHandler = async (request, h) => {
       data: orders,
     });
   } catch (err) {
-    console.error(err);
-    return h.response({
-      status: 'fail',
-      message: 'Gagal mengambil order',
-    }).code(500);
+    console.error('Error in getOrdersByUserHandler:', err.message);
+  return h.response({
+    status: 'fail',
+    message: 'Gagal mengambil order: ' + err.message,
+  }).code(500);
   }
 };
 
