@@ -132,17 +132,20 @@ const createBuketHandler = async (request, h) => {
     const buketId = nanoid(16);
 
     const newBuket = {
-      id: buketId,
-      name,
-      description,
-      type,
-      category,
-      requires_photo: requires_photo === 'true',
-      image_url: imageUrl,
-      materialsBySize: parsedMaterials,
-      base_price_by_size, // ✅ ditambahkan ke dokumen
-      createdAt: new Date().toISOString(),
-    };
+    id: buketId,
+    name,
+    description,
+    type,
+    category,
+    requires_photo: requires_photo === 'true' || requires_photo === true,
+    is_customizable: is_customizable === 'true' || is_customizable === true,
+    processing_time: parseInt(processing_time),
+    image_url: imageUrl,
+    materialsBySize: parsedMaterials,
+    base_price_by_size,
+    createdAt: new Date().toISOString(),
+  };
+
 
     await db.collection('buket').doc(buketId).set(newBuket);
 
