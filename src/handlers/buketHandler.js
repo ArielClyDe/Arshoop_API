@@ -273,7 +273,6 @@ const deleteBuketHandler = async (request, h) => {
 };
 
 module.exports = {
-  uploadImageHandler,
   createBuketHandler,
   getAllBuketHandler,
   getBuketDetail,
