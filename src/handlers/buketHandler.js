@@ -83,6 +83,10 @@ const createBuketHandler = async (request, h) => {
       createdAt: new Date().toISOString(),
     };
 
+    const parsedMaterialsBySize = typeof materialsBySize === 'string'
+  ? JSON.parse(materialsBySize)
+  : materialsBySize;
+
     const docRef = await db.collection('buket').add(newBuket);
 
     return h.response({ status: 'success', id: docRef.id }).code(201);
