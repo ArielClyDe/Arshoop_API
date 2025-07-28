@@ -68,25 +68,51 @@ const calculateBasePriceBySize = async (materialsBySize) => {
 // Handler untuk membuat buket
 const createBuketHandler = async (request, h) => {
   try {
-    const { name, type, category, requires_photo, imageUrl } = request.payload;
-
-    const parsedMaterialsBySize = typeof request.payload.materialsBySize === 'string'
-      ? JSON.parse(request.payload.materialsBySize)
-      : request.payload.materialsBySize;
-
-    const base_price_by_size = await calculateBasePriceBySize(parsedMaterialsBySize);
-
-    const newBuket = {
+    const {
       name,
       type,
       category,
       requires_photo,
+      is_customizable, // pastikan field ini juga dikirim dari frontend
+    } = request.payload;
+
+    const image = request.payload.image;
+    if (!image) {
+      return h.response({
+        status: 'fail',
+        message: 'Gambar buket wajib diunggah',
+      }).code(400);
+    }
+
+    // Upload gambar ke Cloudinary
+    const result = await cloudinary.uploader.upload(image.path, {
+      folder: 'buket',
+    });
+    const imageUrl = result.secure_url;
+
+    // Parse materialsBySize (karena dari Postman biasanya dikirim sebagai string)
+    const parsedMaterialsBySize =
+      typeof request.payload.materialsBySize === 'string'
+        ? JSON.parse(request.payload.materialsBySize)
+        : request.payload.materialsBySize;
+
+    // Hitung harga dasar berdasarkan bahan
+    const base_price_by_size = await calculateBasePriceBySize(parsedMaterialsBySize);
+
+    // Buat dokumen baru
+    const newBuket = {
+      name,
+      type,
+      category,
+      requires_photo: requires_photo === 'true' || requires_photo === true,
+      is_customizable: is_customizable === 'true' || is_customizable === true,
       imageUrl,
       materialsBySize: parsedMaterialsBySize,
       base_price_by_size,
       createdAt: new Date().toISOString(),
     };
 
+    // Simpan ke Firestore
     const docRef = await db.collection('buket').add(newBuket);
 
     return h.response({ status: 'success', id: docRef.id }).code(201);
