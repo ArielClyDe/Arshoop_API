@@ -4,13 +4,15 @@ const path = require('path');
 const { db } = require('../services/firebaseService');
 
 // Upload gambar ke Cloudinary
+// Upload gambar ke Cloudinary
 const uploadImageHandler = async (request, h) => {
-  const { image } = request.payload;
+  const { image, type } = request.payload;
 
   const filename = `${Date.now()}-${image.hapi.filename}`;
   const filepath = path.join(__dirname, '../../uploads', filename);
   const fileStream = fs.createWriteStream(filepath);
 
+  // Simpan file sementara
   await new Promise((resolve, reject) => {
     image.pipe(fileStream);
     image.on('end', resolve);
@@ -18,11 +20,17 @@ const uploadImageHandler = async (request, h) => {
   });
 
   try {
+    // Tentukan folder penyimpanan berdasarkan tipe
+    let folder = 'buket';
+    if (type === 'foto_user') {
+      folder = 'foto_input_user';
+    }
+
     const result = await cloudinary.uploader.upload(filepath, {
-      folder: 'arshoop'
+      folder
     });
 
-    fs.unlinkSync(filepath);
+    fs.unlinkSync(filepath); // hapus file lokal setelah upload
 
     return h.response({
       status: 'success',
@@ -39,7 +47,19 @@ const uploadImageHandler = async (request, h) => {
   }
 };
 
-// Tambahkan buket baru dan hitung harga bahan per ukuran
+// Helper untuk hitung total harga dari array bahan
+const calculateTotalPrice = async (materials) => {
+  let total = 0;
+  for (const item of materials) {
+    const materialDoc = await db.collection('materials').doc(item.materialId).get();
+    if (materialDoc.exists) {
+      const materialData = materialDoc.data();
+      total += materialData.price * item.quantity;
+    }
+  }
+  return total;
+};
+
 // Tambahkan buket baru (dengan bahan disimpan langsung di dalamnya)
 const createBuketHandler = async (request, h) => {
   const {
@@ -55,17 +75,11 @@ const createBuketHandler = async (request, h) => {
   } = request.payload;
 
   try {
-    // Hitung total harga dari bahan ukuran small
-    let totalPriceSmall = 0;
-    const smallMaterials = materialsBySize?.small || [];
-
-    for (const item of smallMaterials) {
-      const materialDoc = await db.collection('materials').doc(item.materialId).get();
-      if (materialDoc.exists) {
-        const materialData = materialDoc.data();
-        totalPriceSmall += materialData.price * item.quantity;
-      }
-    }
+    const base_price_by_size = {
+      small: await calculateTotalPrice(materialsBySize?.small || []),
+      medium: await calculateTotalPrice(materialsBySize?.medium || []),
+      large: await calculateTotalPrice(materialsBySize?.large || [])
+    };
 
     const newDocRef = db.collection('buket').doc();
     const buketId = newDocRef.id;
@@ -77,7 +91,7 @@ const createBuketHandler = async (request, h) => {
       category,
       image_url,
       is_customizable,
-      price: totalPriceSmall, // 👈 set harga awal dari ukuran small
+      base_price_by_size, // 👈 gunakan ini
       processing_time,
       requires_photo,
       type,
@@ -100,8 +114,6 @@ const createBuketHandler = async (request, h) => {
     }).code(500);
   }
 };
-
-
 
 // Ambil semua buket (tanpa bahan)
 const getAllBuketHandler = async (request, h) => {
@@ -193,6 +205,7 @@ const getBuketDetail = async (request, h) => {
     return h.response({ message: 'Terjadi kesalahan.' }).code(500);
   }
 };
+
 // Edit buket (Admin)
 const updateBuketHandler = async (request, h) => {
   const { buketId } = request.params;
@@ -236,7 +249,6 @@ const deleteBuketHandler = async (request, h) => {
     }).code(500);
   }
 };
-
 
 module.exports = {
   uploadImageHandler,
