@@ -4,6 +4,44 @@ const path = require('path');
 const { db } = require('../services/firebaseService');
 
 // Upload gambar ke Cloudinary
+const cloudinary = require('../services/cloudinaryService');
+const fs = require('fs');
+const path = require('path');
+
+const uploadImageHandler = async (request, h) => {
+  const { image } = request.payload;
+
+  const filename = `${Date.now()}-${image.hapi.filename}`;
+  const filepath = path.join(__dirname, '../../uploads', filename);
+  const fileStream = fs.createWriteStream(filepath);
+
+  await new Promise((resolve, reject) => {
+    image.pipe(fileStream);
+    image.on('end', resolve);
+    image.on('error', reject);
+  });
+
+  try {
+    const result = await cloudinary.uploader.upload(filepath, {
+      folder: 'buket' // atau sesuai folder yang kamu inginkan
+    });
+
+    fs.unlinkSync(filepath); // hapus file lokal setelah upload berhasil
+
+    return h.response({
+      status: 'success',
+      message: 'Upload berhasil',
+      imageUrl: result.secure_url,
+    });
+  } catch (error) {
+    return h.response({
+      status: 'fail',
+      message: 'Upload gagal',
+      error: error.message
+    }).code(500);
+  }
+};
+
 // Handler untuk membuat buket sekaligus upload gambar
 const createBuketHandler = async (request, h) => {
   const {
