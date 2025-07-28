@@ -39,68 +39,56 @@ const uploadImageHandler = async (request, h) => {
   }
 };
 
-// Handler untuk membuat buket sekaligus upload gambar
+// Fungsi untuk menghitung harga dasar per ukuran dari materialsBySize
+const calculateBasePriceBySize = async (materialsBySize) => {
+  const basePrice = {};
+
+  for (const size in materialsBySize) {
+    const materialList = materialsBySize[size];
+    let total = 0;
+
+    for (const item of materialList) {
+      const materialSnapshot = await db.collection('materials').doc(item.materialId).get();
+
+      if (!materialSnapshot.exists) {
+        throw new Error(`Material dengan ID ${item.materialId} tidak ditemukan.`);
+      }
+
+      const materialData = materialSnapshot.data();
+      const price = materialData.price || 0;
+      total += price * (item.quantity || 0);
+    }
+
+    basePrice[size] = total;
+  }
+
+  return basePrice;
+};
+
+// Handler untuk membuat buket
 const createBuketHandler = async (request, h) => {
-  const {
-    name,
-    size,
-    category,
-    is_customizable,
-    processing_time,
-    requires_photo,
-    type,
-    materialsBySize,
-  } = request.payload;
-
-  const image = request.payload.image;
-  const filename = `${Date.now()}-${image.hapi.filename}`;
-  const filepath = path.join(__dirname, '../../uploads', filename);
-
-  const fileStream = fs.createWriteStream(filepath);
-  await new Promise((resolve, reject) => {
-    image.pipe(fileStream);
-    image.on('end', resolve);
-    image.on('error', reject);
-  });
-
   try {
-    // Upload ke Cloudinary
-    const result = await cloudinary.uploader.upload(filepath, {
-      folder: 'buket'
-    });
+    const { name, type, category, requires_photo, materialsBySize, imageUrl } = request.payload;
 
-    // Hapus file lokal
-    fs.unlinkSync(filepath);
+    const base_price_by_size = await calculateBasePriceBySize(materialsBySize);
 
-    // Parse materialsBySize dari string ke objek
-    const parsedMaterials = JSON.parse(materialsBySize);
-
-    // Simpan ke Firestore
-    const buketRef = await db.collection('bukets').add({
+    const newBuket = {
       name,
-      size,
-      category,
-      image_url: result.secure_url,
-      is_customizable,
-      processing_time,
-      requires_photo,
       type,
-      materialsBySize: parsedMaterials
-    });
+      category,
+      requires_photo,
+      imageUrl,
+      materialsBySize,
+      base_price_by_size,
+      createdAt: new Date().toISOString(),
+    };
 
-    return h.response({
-      status: 'success',
-      message: 'Buket berhasil ditambahkan',
-      id: buketRef.id
-    }).code(201);
+    const docRef = await db.collection('bukets').add(newBuket);
 
+    return h.response({ status: 'success', id: docRef.id }).code(201);
   } catch (error) {
     console.error(error);
-    return h.response({
-      status: 'fail',
-      message: 'Gagal menambahkan buket',
-      error: error.message
-    }).code(500);
+    return h.response({ status: 'fail', message: error.message }).code(500);
   }
 };
 
