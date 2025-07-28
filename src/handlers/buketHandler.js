@@ -107,7 +107,7 @@ const createBuketHandler = async (request, h) => {
     const newBuket = {
       id: buketId,
       name,
-      description,
+      ...(description !== undefined && { description }),
       type,
       category,
       requires_photo: requires_photo === 'true' || requires_photo === true,
