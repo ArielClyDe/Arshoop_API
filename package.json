@@ -20,7 +20,8 @@
     "form-data": "^4.0.3",
     "hapi-swagger": "^17.3.2",
     "joi": "^17.13.3",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "nanoid": "^5.1.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
