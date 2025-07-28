@@ -1,7 +1,8 @@
-const cloudinary = require('../services/cloudinaryService');
 const fs = require('fs');
 const path = require('path');
 const { db } = require('../services/firebaseService');
+const cloudinary = require('../services/cloudinaryService');
+const { nanoid } = require('nanoid');
 
 // Upload gambar ke Cloudinary
 
@@ -67,58 +68,77 @@ const calculateBasePriceBySize = async (materialsBySize) => {
 
 // Handler untuk membuat buket
 const createBuketHandler = async (request, h) => {
+  const {
+    name,
+    description,
+    type,
+    category,
+    requires_photo,
+    materialsBySize,
+  } = request.payload;
+
+  const image = request.payload.image;
+
+  // 1. Simpan gambar ke file lokal sementara
+  const filename = `${Date.now()}-${image.hapi.filename}`;
+  const filepath = path.join(__dirname, '../../uploads', filename);
+  const fileStream = fs.createWriteStream(filepath);
+
+  await new Promise((resolve, reject) => {
+    image.pipe(fileStream);
+    image.on('end', resolve);
+    image.on('error', reject);
+  });
+
+  let imageUrl;
+
   try {
-    const {
-      name,
-      type,
-      category,
-      requires_photo,
-      is_customizable, // pastikan field ini juga dikirim dari frontend
-    } = request.payload;
-
-    const image = request.payload.image;
-    if (!image) {
-      return h.response({
-        status: 'fail',
-        message: 'Gambar buket wajib diunggah',
-      }).code(400);
-    }
-
-    // Upload gambar ke Cloudinary
-    const result = await cloudinary.uploader.upload(image.path, {
-      folder: 'buket',
+    // 2. Upload ke Cloudinary
+    const result = await cloudinary.uploader.upload(filepath, {
+      folder: 'buket', // bisa diganti ke folder lain jika mau
     });
-    const imageUrl = result.secure_url;
 
-    // Parse materialsBySize (karena dari Postman biasanya dikirim sebagai string)
-    const parsedMaterialsBySize =
-      typeof request.payload.materialsBySize === 'string'
-        ? JSON.parse(request.payload.materialsBySize)
-        : request.payload.materialsBySize;
+    imageUrl = result.secure_url;
 
-    // Hitung harga dasar berdasarkan bahan
-    const base_price_by_size = await calculateBasePriceBySize(parsedMaterialsBySize);
+    // 3. Hapus file lokal
+    fs.unlinkSync(filepath);
+  } catch (err) {
+    return h.response({
+      status: 'fail',
+      message: 'Gagal upload gambar ke Cloudinary',
+      error: err.message,
+    }).code(500);
+  }
 
-    // Buat dokumen baru
+  try {
+    // 4. Simpan data buket ke Firebase
+    const buketId = nanoid(16);
+
     const newBuket = {
+      id: buketId,
       name,
+      description,
       type,
       category,
-      requires_photo: requires_photo === 'true' || requires_photo === true,
-      is_customizable: is_customizable === 'true' || is_customizable === true,
-      imageUrl,
-      materialsBySize: parsedMaterialsBySize,
-      base_price_by_size,
+      requires_photo: requires_photo === 'true', // convert string to boolean
+      image_url: imageUrl,
+      materialsBySize: JSON.parse(materialsBySize), // dikirim dalam string JSON
       createdAt: new Date().toISOString(),
     };
 
-    // Simpan ke Firestore
-    const docRef = await db.collection('buket').add(newBuket);
+    await db.collection('buket').doc(buketId).set(newBuket);
 
-    return h.response({ status: 'success', id: docRef.id }).code(201);
+    return h.response({
+      status: 'success',
+      message: 'Buket berhasil dibuat',
+      data: newBuket,
+    }).code(201);
   } catch (error) {
-    console.error(error);
-    return h.response({ status: 'fail', message: error.message }).code(500);
+    return h.response({
+      status: 'fail',
+      message: 'Gagal menyimpan buket ke database',
+      error: error.message,
+    }).code(500);
   }
 };
 
