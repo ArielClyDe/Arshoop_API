@@ -67,10 +67,10 @@ const getAllMaterialsHandler = async (request, h) => {
 };
 
 const deleteMaterialHandler = async (request, h) => {
-  const { id } = request.params;
+  const { materialId } = request.params;
 
   try {
-    const docRef = firebaseService.db.collection('materials').doc(id);
+    const docRef = firebaseService.db.collection('materials').doc(materialId);
     const docSnap = await docRef.get();
 
     if (!docSnap.exists) {
