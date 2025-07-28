@@ -68,9 +68,13 @@ const calculateBasePriceBySize = async (materialsBySize) => {
 // Handler untuk membuat buket
 const createBuketHandler = async (request, h) => {
   try {
-    const { name, type, category, requires_photo, materialsBySize, imageUrl } = request.payload;
+    const { name, type, category, requires_photo, imageUrl } = request.payload;
 
-    const base_price_by_size = await calculateBasePriceBySize(materialsBySize);
+    const parsedMaterialsBySize = typeof request.payload.materialsBySize === 'string'
+      ? JSON.parse(request.payload.materialsBySize)
+      : request.payload.materialsBySize;
+
+    const base_price_by_size = await calculateBasePriceBySize(parsedMaterialsBySize);
 
     const newBuket = {
       name,
@@ -78,14 +82,10 @@ const createBuketHandler = async (request, h) => {
       category,
       requires_photo,
       imageUrl,
-      materialsBySize,
+      materialsBySize: parsedMaterialsBySize,
       base_price_by_size,
       createdAt: new Date().toISOString(),
     };
-
-    const parsedMaterialsBySize = typeof materialsBySize === 'string'
-  ? JSON.parse(materialsBySize)
-  : materialsBySize;
 
     const docRef = await db.collection('buket').add(newBuket);
 
@@ -95,6 +95,7 @@ const createBuketHandler = async (request, h) => {
     return h.response({ status: 'fail', message: error.message }).code(500);
   }
 };
+
 
 // Ambil semua buket (tanpa bahan)
 const getAllBuketHandler = async (request, h) => {
