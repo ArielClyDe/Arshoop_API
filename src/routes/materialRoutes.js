@@ -18,7 +18,7 @@ module.exports = [
       validate: {
         payload: Joi.object({
           name: Joi.string().required(),
-          type: Joi.string().valid('Bunga', 'snack', 'Photo', 'boneka', 'Lainnya').required(),
+          type: Joi.string().valid('Bunga', 'Snack', 'Photo', 'Boneka', 'Lainnya').required(),
           price: Joi.number().integer().required(),
           image: Joi.any().required(),
         }),
