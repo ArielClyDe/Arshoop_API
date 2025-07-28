@@ -54,7 +54,6 @@ module.exports = [
     validate: {
       payload: Joi.object({
         name: Joi.string().required(),
-        size: Joi.string().valid('small', 'medium', 'large', 'multi').required(),
         category: Joi.string().required(),
         is_customizable: Joi.boolean().required(),
         processing_time: Joi.alternatives().try(Joi.string(), Joi.number()).required(),
