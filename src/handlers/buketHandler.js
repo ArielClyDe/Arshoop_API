@@ -1,13 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { nanoid } = require('nanoid');
 const { db } = require('../services/firebaseService');
 const cloudinary = require('../services/cloudinaryService');
-const { nanoid } = require('nanoid');
-
-
 
 // Upload gambar ke Cloudinary
-
 const uploadImageHandler = async (request, h) => {
   const { image } = request.payload;
 
@@ -23,7 +20,7 @@ const uploadImageHandler = async (request, h) => {
 
   try {
     const result = await cloudinary.uploader.upload(filepath, {
-      folder: 'buket', // atau sesuai folder yang kamu inginkan
+      folder: 'buket',
       timeout: 60000,
     });
 
@@ -38,12 +35,12 @@ const uploadImageHandler = async (request, h) => {
     return h.response({
       status: 'fail',
       message: 'Upload gagal',
-      error: error.message
+      error: error.message,
     }).code(500);
   }
 };
 
-// Fungsi untuk menghitung harga dasar per ukuran dari materialsBySize
+// Hitung base_price_by_size berdasarkan materialId dan quantity
 const calculateBasePriceBySize = async (materialsBySize) => {
   const basePrice = {};
 
@@ -69,7 +66,7 @@ const calculateBasePriceBySize = async (materialsBySize) => {
   return basePrice;
 };
 
-// Handler untuk membuat buket
+// Handler utama
 const createBuketHandler = async (request, h) => {
   const {
     name,
@@ -77,12 +74,14 @@ const createBuketHandler = async (request, h) => {
     type,
     category,
     requires_photo,
-    materialsBySize,
+    is_customizable,
+    processing_time,
   } = request.payload;
 
   const image = request.payload.image;
+  const materialsBySizeRaw = request.payload.materialsBySize;
 
-  // 1. Simpan gambar ke file lokal sementara
+  // Simpan gambar ke lokal
   const filename = `${Date.now()}-${image.hapi.filename}`;
   const filepath = path.join(__dirname, '../../uploads', filename);
   const fileStream = fs.createWriteStream(filepath);
@@ -96,14 +95,11 @@ const createBuketHandler = async (request, h) => {
   let imageUrl;
 
   try {
-    // 2. Upload ke Cloudinary
     const result = await cloudinary.uploader.upload(filepath, {
       folder: 'buket',
     });
 
     imageUrl = result.secure_url;
-
-    // 3. Hapus file lokal
     fs.unlinkSync(filepath);
   } catch (err) {
     return h.response({
@@ -114,10 +110,9 @@ const createBuketHandler = async (request, h) => {
   }
 
   try {
-    // ✅ 4. Parse materialsBySize yang dikirim dalam string JSON
     let parsedMaterials;
     try {
-      parsedMaterials = JSON.parse(materialsBySize);
+      parsedMaterials = JSON.parse(materialsBySizeRaw);
     } catch (parseErr) {
       return h.response({
         status: 'fail',
@@ -126,27 +121,23 @@ const createBuketHandler = async (request, h) => {
       }).code(400);
     }
 
-    // ✅ 5. Hitung harga dasar per ukuran
     const base_price_by_size = await calculateBasePriceBySize(parsedMaterials);
-
-    // 6. Simpan ke Firebase
     const buketId = nanoid(16);
 
     const newBuket = {
-    id: buketId,
-    name,
-    description,
-    type,
-    category,
-    requires_photo: requires_photo === 'true' || requires_photo === true,
-    is_customizable: is_customizable === 'true' || is_customizable === true,
-    processing_time: parseInt(processing_time),
-    image_url: imageUrl,
-    materialsBySize: parsedMaterials,
-    base_price_by_size,
-    createdAt: new Date().toISOString(),
-  };
-
+      id: buketId,
+      name,
+      description,
+      type,
+      category,
+      requires_photo: requires_photo === 'true' || requires_photo === true,
+      is_customizable: is_customizable === 'true' || is_customizable === true,
+      processing_time: parseInt(processing_time),
+      image_url: imageUrl,
+      materialsBySize: parsedMaterials,
+      base_price_by_size,
+      createdAt: new Date().toISOString(),
+    };
 
     await db.collection('buket').doc(buketId).set(newBuket);
 
