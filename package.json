@@ -22,6 +22,7 @@
     "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.2",
     "nanoid": "^3.3.11",
+    "streamifier": "^0.1.1",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

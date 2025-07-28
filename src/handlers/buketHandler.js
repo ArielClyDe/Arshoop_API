@@ -1,46 +1,9 @@
-const fs = require('fs');
-const path = require('path');
 const { nanoid } = require('nanoid');
 const { db } = require('../services/firebaseService');
 const cloudinary = require('../services/cloudinaryService');
+const streamifier = require('streamifier');
 
-// Upload gambar ke Cloudinary
-const uploadImageHandler = async (request, h) => {
-  const { image } = request.payload;
-
-  const filename = `${Date.now()}-${image.hapi.filename}`;
-  const filepath = path.join(__dirname, '../../uploads', filename);
-  const fileStream = fs.createWriteStream(filepath);
-
-  await new Promise((resolve, reject) => {
-    image.pipe(fileStream);
-    image.on('end', resolve);
-    image.on('error', reject);
-  });
-
-  try {
-    const result = await cloudinary.uploader.upload(filepath, {
-      folder: 'buket',
-      timeout: 60000,
-    });
-
-    fs.unlinkSync(filepath); // hapus file lokal setelah upload berhasil
-
-    return h.response({
-      status: 'success',
-      message: 'Upload berhasil',
-      imageUrl: result.secure_url,
-    });
-  } catch (error) {
-    return h.response({
-      status: 'fail',
-      message: 'Upload gagal',
-      error: error.message,
-    }).code(500);
-  }
-};
-
-// Hitung base_price_by_size berdasarkan materialId dan quantity
+// Fungsi bantu untuk hitung harga
 const calculateBasePriceBySize = async (materialsBySize) => {
   const basePrice = {};
 
@@ -66,7 +29,7 @@ const calculateBasePriceBySize = async (materialsBySize) => {
   return basePrice;
 };
 
-// Handler utama
+// Handler createBuket tanpa simpan ke lokal
 const createBuketHandler = async (request, h) => {
   const {
     name,
@@ -81,26 +44,43 @@ const createBuketHandler = async (request, h) => {
   const image = request.payload.image;
   const materialsBySizeRaw = request.payload.materialsBySize;
 
-  // Simpan gambar ke lokal
-  const filename = `${Date.now()}-${image.hapi.filename}`;
-  const filepath = path.join(__dirname, '../../uploads', filename);
-  const fileStream = fs.createWriteStream(filepath);
-
-  await new Promise((resolve, reject) => {
-    image.pipe(fileStream);
-    image.on('end', resolve);
-    image.on('error', reject);
-  });
-
-  let imageUrl;
-
+  let buffer;
   try {
-    const result = await cloudinary.uploader.upload(filepath, {
-      folder: 'buket',
+    buffer = await new Promise((resolve, reject) => {
+      const chunks = [];
+      image.on('data', (chunk) => chunks.push(chunk));
+      image.on('end', () => resolve(Buffer.concat(chunks)));
+      image.on('error', reject);
     });
+  } catch (err) {
+    return h.response({
+      status: 'fail',
+      message: 'Gagal membaca gambar dari request',
+      error: err.message,
+    }).code(400);
+  }
 
+  // Upload ke Cloudinary langsung dari buffer
+  let imageUrl;
+  try {
+    const uploadStream = () =>
+      new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'buket',
+            resource_type: 'image',
+          },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        );
+
+        streamifier.createReadStream(buffer).pipe(stream);
+      });
+
+    const result = await uploadStream();
     imageUrl = result.secure_url;
-    fs.unlinkSync(filepath);
   } catch (err) {
     return h.response({
       status: 'fail',
@@ -154,6 +134,7 @@ const createBuketHandler = async (request, h) => {
     }).code(500);
   }
 };
+
 
 
 // Ambil semua buket (tanpa bahan)
