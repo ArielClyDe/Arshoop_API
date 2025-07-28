@@ -83,7 +83,7 @@ const createBuketHandler = async (request, h) => {
       createdAt: new Date().toISOString(),
     };
 
-    const docRef = await db.collection('bukets').add(newBuket);
+    const docRef = await db.collection('buket').add(newBuket);
 
     return h.response({ status: 'success', id: docRef.id }).code(201);
   } catch (error) {
