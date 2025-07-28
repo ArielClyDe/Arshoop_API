@@ -23,7 +23,8 @@ const uploadImageHandler = async (request, h) => {
 
   try {
     const result = await cloudinary.uploader.upload(filepath, {
-      folder: 'buket' // atau sesuai folder yang kamu inginkan
+      folder: 'buket', // atau sesuai folder yang kamu inginkan
+      timeout: 60000,
     });
 
     fs.unlinkSync(filepath); // hapus file lokal setelah upload berhasil
