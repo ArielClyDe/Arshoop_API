@@ -52,16 +52,14 @@ const createBuketHandler = async (request, h) => {
     processing_time,
     requires_photo,
     type,
-    materialsBySize: rawMaterialsBySize
+    materialsBySize,
   } = request.payload;
 
   const image = request.payload.image;
-
-  // Simpan file lokal sementara
   const filename = `${Date.now()}-${image.hapi.filename}`;
   const filepath = path.join(__dirname, '../../uploads', filename);
-  const fileStream = fs.createWriteStream(filepath);
 
+  const fileStream = fs.createWriteStream(filepath);
   await new Promise((resolve, reject) => {
     image.pipe(fileStream);
     image.on('end', resolve);
@@ -69,59 +67,41 @@ const createBuketHandler = async (request, h) => {
   });
 
   try {
-    // Upload ke Cloudinary folder `buket`
+    // Upload ke Cloudinary
     const result = await cloudinary.uploader.upload(filepath, {
       folder: 'buket'
     });
 
-    fs.unlinkSync(filepath); // Hapus file lokal
+    // Hapus file lokal
+    fs.unlinkSync(filepath);
 
-    // Parsing bahan (string JSON dari form-data)
-    const parsedMaterials = JSON.parse(rawMaterialsBySize || '{}');
-
-    // Hitung harga awal dari ukuran small
-    let totalPriceSmall = 0;
-    const smallMaterials = parsedMaterials.small || [];
-
-    for (const item of smallMaterials) {
-      const materialDoc = await db.collection('materials').doc(item.materialId).get();
-      if (materialDoc.exists) {
-        const materialData = materialDoc.data();
-        totalPriceSmall += materialData.price * item.quantity;
-      }
-    }
+    // Parse materialsBySize dari string ke objek
+    const parsedMaterials = JSON.parse(materialsBySize);
 
     // Simpan ke Firestore
-    const newDocRef = db.collection('buket').doc();
-    const buketId = newDocRef.id;
-
-    const newBuket = {
-      buketId,
+    const buketRef = await db.collection('bukets').add({
       name,
       size,
       category,
       image_url: result.secure_url,
-      is_customizable: is_customizable === 'true', // karena dari form-data, dikonversi ke boolean
-      price: totalPriceSmall,
+      is_customizable,
       processing_time,
-      requires_photo: requires_photo === 'true',
+      requires_photo,
       type,
-      materialsBySize: parsedMaterials,
-      created_at: new Date().toISOString()
-    };
-
-    await newDocRef.set(newBuket);
+      materialsBySize: parsedMaterials
+    });
 
     return h.response({
       status: 'success',
-      message: 'Buket berhasil dibuat',
-      data: newBuket
+      message: 'Buket berhasil ditambahkan',
+      id: buketRef.id
     }).code(201);
+
   } catch (error) {
     console.error(error);
     return h.response({
       status: 'fail',
-      message: 'Gagal membuat buket',
+      message: 'Gagal menambahkan buket',
       error: error.message
     }).code(500);
   }
