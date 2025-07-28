@@ -4,15 +4,26 @@ const path = require('path');
 const { db } = require('../services/firebaseService');
 
 // Upload gambar ke Cloudinary
-// Upload gambar ke Cloudinary
-const uploadImageHandler = async (request, h) => {
-  const { image, type } = request.payload;
+// Handler untuk membuat buket sekaligus upload gambar
+const createBuketHandler = async (request, h) => {
+  const {
+    name,
+    size,
+    category,
+    is_customizable,
+    processing_time,
+    requires_photo,
+    type,
+    materialsBySize: rawMaterialsBySize
+  } = request.payload;
 
+  const image = request.payload.image;
+
+  // Simpan file lokal sementara
   const filename = `${Date.now()}-${image.hapi.filename}`;
   const filepath = path.join(__dirname, '../../uploads', filename);
   const fileStream = fs.createWriteStream(filepath);
 
-  // Simpan file sementara
   await new Promise((resolve, reject) => {
     image.pipe(fileStream);
     image.on('end', resolve);
@@ -20,67 +31,29 @@ const uploadImageHandler = async (request, h) => {
   });
 
   try {
-    // Tentukan folder penyimpanan berdasarkan tipe
-    let folder = 'buket';
-    if (type === 'foto_user') {
-      folder = 'foto_input_user';
-    }
-
+    // Upload ke Cloudinary folder `buket`
     const result = await cloudinary.uploader.upload(filepath, {
-      folder
+      folder: 'buket'
     });
 
-    fs.unlinkSync(filepath); // hapus file lokal setelah upload
+    fs.unlinkSync(filepath); // Hapus file lokal
 
-    return h.response({
-      status: 'success',
-      message: 'Gambar berhasil diupload ke Cloudinary',
-      imageUrl: result.secure_url
-    }).code(201);
-  } catch (error) {
-    console.error(error);
-    return h.response({
-      status: 'error',
-      message: 'Upload gagal',
-      error: error.message
-    }).code(500);
-  }
-};
+    // Parsing bahan (string JSON dari form-data)
+    const parsedMaterials = JSON.parse(rawMaterialsBySize || '{}');
 
-// Helper untuk hitung total harga dari array bahan
-const calculateTotalPrice = async (materials) => {
-  let total = 0;
-  for (const item of materials) {
-    const materialDoc = await db.collection('materials').doc(item.materialId).get();
-    if (materialDoc.exists) {
-      const materialData = materialDoc.data();
-      total += materialData.price * item.quantity;
+    // Hitung harga awal dari ukuran small
+    let totalPriceSmall = 0;
+    const smallMaterials = parsedMaterials.small || [];
+
+    for (const item of smallMaterials) {
+      const materialDoc = await db.collection('materials').doc(item.materialId).get();
+      if (materialDoc.exists) {
+        const materialData = materialDoc.data();
+        totalPriceSmall += materialData.price * item.quantity;
+      }
     }
-  }
-  return total;
-};
 
-// Tambahkan buket baru (dengan bahan disimpan langsung di dalamnya)
-const createBuketHandler = async (request, h) => {
-  const {
-    name,
-    size,
-    category,
-    image_url,
-    is_customizable,
-    processing_time,
-    requires_photo,
-    type,
-    materialsBySize
-  } = request.payload;
-
-  try {
-    const base_price_by_size = {
-      small: await calculateTotalPrice(materialsBySize?.small || []),
-      medium: await calculateTotalPrice(materialsBySize?.medium || []),
-      large: await calculateTotalPrice(materialsBySize?.large || [])
-    };
-
+    // Simpan ke Firestore
     const newDocRef = db.collection('buket').doc();
     const buketId = newDocRef.id;
 
@@ -89,13 +62,13 @@ const createBuketHandler = async (request, h) => {
       name,
       size,
       category,
-      image_url,
-      is_customizable,
-      base_price_by_size, // 👈 gunakan ini
+      image_url: result.secure_url,
+      is_customizable: is_customizable === 'true', // karena dari form-data, dikonversi ke boolean
+      price: totalPriceSmall,
       processing_time,
-      requires_photo,
+      requires_photo: requires_photo === 'true',
       type,
-      materialsBySize,
+      materialsBySize: parsedMaterials,
       created_at: new Date().toISOString()
     };
 
@@ -110,7 +83,8 @@ const createBuketHandler = async (request, h) => {
     console.error(error);
     return h.response({
       status: 'fail',
-      message: 'Gagal membuat buket'
+      message: 'Gagal membuat buket',
+      error: error.message
     }).code(500);
   }
 };
