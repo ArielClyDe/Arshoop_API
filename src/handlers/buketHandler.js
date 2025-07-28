@@ -4,9 +4,6 @@ const path = require('path');
 const { db } = require('../services/firebaseService');
 
 // Upload gambar ke Cloudinary
-const cloudinary = require('../services/cloudinaryService');
-const fs = require('fs');
-const path = require('path');
 
 const uploadImageHandler = async (request, h) => {
   const { image } = request.payload;
