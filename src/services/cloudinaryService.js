@@ -11,6 +11,8 @@ console.log('Cloudinary config:', {
   cloud_name: JSON.stringify(process.env.CLOUDINARY_CLOUD_NAME),
   api_key: JSON.stringify(process.env.CLOUDINARY_API_KEY),
 });
+console.log('Raw CLOUDINARY_CLOUD_NAME:', JSON.stringify(process.env.CLOUDINARY_CLOUD_NAME));
+
 
 
 
