@@ -11,7 +11,7 @@ module.exports = [
       validate: {
         payload: Joi.object({
           userId: Joi.string().required(),
-          cartId: Joi.string().optional(), // jika kosong, maka semua cart user diproses
+          cartId: Joi.string().optional(),
         }),
       },
       handler: orderHandler.createOrderHandler,
@@ -34,22 +34,19 @@ module.exports = [
       description: 'Update status order (pending, processing, completed, cancelled)',
       validate: {
         payload: Joi.object({
-          status: Joi.string().valid('pending', 'processing', 'completed', 'cancelled').required()
-        })
-     },
-      handler: orderHandler.updateOrderStatusHandler
-    }
+          status: Joi.string().valid('pending', 'processing', 'completed', 'cancelled').required(),
+        }),
+      },
+      handler: orderHandler.updateOrderStatusHandler,
+    },
   },
   {
-  method: 'GET',
-  path: '/orders/detail/{orderId}',
-  options: {
-    tags: ['api'],
-    description: 'Menampilkan detail satu order',
-    handler: orderHandler.getOrderByIdHandler,
-  }
-}
-
-  
-
+    method: 'GET',
+    path: '/orders/detail/{orderId}',
+    options: {
+      tags: ['api'],
+      description: 'Menampilkan detail satu order',
+      handler: orderHandler.getOrderByIdHandler,
+    },
+  },
 ];

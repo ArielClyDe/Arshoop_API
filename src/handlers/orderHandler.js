@@ -7,7 +7,6 @@ const createOrderHandler = async (request, h) => {
   try {
     let carts = [];
 
-    // Jika cartId diberikan → ambil 1 cart
     if (cartId) {
       const cartDoc = await db.collection('carts').doc(cartId).get();
       if (!cartDoc.exists) {
@@ -15,7 +14,6 @@ const createOrderHandler = async (request, h) => {
       }
       carts.push({ id: cartDoc.id, ...cartDoc.data() });
     } else {
-      // Jika tidak, ambil semua cart milik user
       const snapshot = await db.collection('carts').where('userId', '==', userId).get();
       snapshot.forEach((doc) => {
         carts.push({ id: doc.id, ...doc.data() });
@@ -31,12 +29,10 @@ const createOrderHandler = async (request, h) => {
     for (const cart of carts) {
       const { buketId, size, quantity, customMaterials = [] } = cart;
 
-      // Ambil data buket
       const buketDoc = await db.collection('buket').doc(buketId).get();
       if (!buketDoc.exists) continue;
       const buketData = buketDoc.data();
 
-      // Ambil materials default dari buket berdasarkan size
       const materialsBySize = buketData.materialsBySize?.[size] || [];
 
       const defaultMaterials = [];
@@ -53,7 +49,6 @@ const createOrderHandler = async (request, h) => {
         }
       }
 
-      // Ambil custom materials (jika ada)
       const customMaterialDetails = [];
       for (const item of customMaterials) {
         const materialDoc = await db.collection('materials').doc(item.materialId).get();
@@ -71,7 +66,6 @@ const createOrderHandler = async (request, h) => {
       const allMaterials = [...defaultMaterials, ...customMaterialDetails];
       const totalPrice = allMaterials.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-      // Buat ID order manual agar bisa simpan orderId di field
       const orderRef = db.collection('orders').doc();
       const orderId = orderRef.id;
 
@@ -88,7 +82,6 @@ const createOrderHandler = async (request, h) => {
 
       await orderRef.set(newOrder);
 
-      // Simpan bahan ke order_materials
       const batch = db.batch();
       allMaterials.forEach((material) => {
         const orderMaterialRef = db.collection('order_materials').doc();
@@ -107,7 +100,6 @@ const createOrderHandler = async (request, h) => {
         materials: allMaterials,
       });
 
-      // Hapus cart
       await db.collection('carts').doc(cart.id).delete();
     }
 
@@ -119,10 +111,7 @@ const createOrderHandler = async (request, h) => {
 
   } catch (err) {
     console.error(err);
-    return h.response({
-      status: 'fail',
-      message: 'Gagal membuat order',
-    }).code(500);
+    return h.response({ status: 'fail', message: 'Gagal membuat order' }).code(500);
   }
 };
 
@@ -139,7 +128,8 @@ const getOrdersByUserHandler = async (request, h) => {
     const orders = [];
 
     for (const doc of snapshot.docs) {
-      const order = doc.data(); // orderId sudah ada di dalam data
+      const order = doc.data();
+
       const buketDoc = await db.collection('buket').doc(order.buketId).get();
       order.buket = buketDoc.exists ? { buketId: buketDoc.id, ...buketDoc.data() } : null;
 
@@ -172,10 +162,7 @@ const getOrdersByUserHandler = async (request, h) => {
     });
   } catch (err) {
     console.error('Error in getOrdersByUserHandler:', err.message);
-  return h.response({
-    status: 'fail',
-    message: 'Gagal mengambil order: ' + err.message,
-  }).code(500);
+    return h.response({ status: 'fail', message: 'Gagal mengambil order: ' + err.message }).code(500);
   }
 };
 
@@ -200,12 +187,10 @@ const updateOrderStatusHandler = async (request, h) => {
     });
   } catch (err) {
     console.error(err);
-    return h.response({
-      status: 'fail',
-      message: 'Gagal memperbarui status order',
-    }).code(500);
+    return h.response({ status: 'fail', message: 'Gagal memperbarui status order' }).code(500);
   }
 };
+
 // Menampilkan detail satu order
 const getOrderByIdHandler = async (request, h) => {
   const { orderId } = request.params;
@@ -218,11 +203,9 @@ const getOrderByIdHandler = async (request, h) => {
 
     const order = orderDoc.data();
 
-    // Ambil data buket
     const buketDoc = await db.collection('buket').doc(order.buketId).get();
     order.buket = buketDoc.exists ? { buketId: buketDoc.id, ...buketDoc.data() } : null;
 
-    // Ambil data bahan dari order_materials
     const materialsSnapshot = await db.collection('order_materials')
       .where('orderId', '==', orderId)
       .get();
