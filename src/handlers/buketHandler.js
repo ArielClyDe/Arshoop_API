@@ -4,7 +4,7 @@ const cloudinary = require('../services/cloudinaryService');
 const streamifier = require('streamifier');
 
 // Fungsi bantu untuk hitung harga
-const calculateBasePriceBySize = async (materialsBySize) => {
+const calculateBasePriceBySize = async (materialsBySize, service_fee = 0) => {
   const basePrice = {};
 
   for (const size in materialsBySize) {
@@ -23,7 +23,7 @@ const calculateBasePriceBySize = async (materialsBySize) => {
       total += price * (item.quantity || 0);
     }
 
-    basePrice[size] = total;
+    basePrice[size] = total + parseInt(service_fee); // Tambahkan service_fee ke total
   }
 
   return basePrice;
@@ -39,6 +39,7 @@ const createBuketHandler = async (request, h) => {
     requires_photo,
     is_customizable,
     processing_time,
+    service_fee = 0 // default 0 jika tidak dikirim
   } = request.payload;
 
   const image = request.payload.image;
@@ -60,7 +61,7 @@ const createBuketHandler = async (request, h) => {
     }).code(400);
   }
 
-  // Upload ke Cloudinary langsung dari buffer
+  // Upload ke Cloudinary
   let imageUrl;
   try {
     const uploadStream = () =>
@@ -101,11 +102,13 @@ const createBuketHandler = async (request, h) => {
       }).code(400);
     }
 
-    const base_price_by_size = await calculateBasePriceBySize(parsedMaterials);
+    const numericServiceFee = parseInt(service_fee) || 0;
+
+    const base_price_by_size = await calculateBasePriceBySize(parsedMaterials, numericServiceFee);
     const buketId = nanoid(16);
 
     const newBuket = {
-      id: buketId,
+      buketId,
       name,
       ...(description !== undefined && { description }),
       type,
@@ -113,10 +116,11 @@ const createBuketHandler = async (request, h) => {
       requires_photo: requires_photo === 'true' || requires_photo === true,
       is_customizable: is_customizable === 'true' || is_customizable === true,
       processing_time: parseInt(processing_time),
+      service_fee: numericServiceFee,
       image_url: imageUrl,
       materialsBySize: parsedMaterials,
       base_price_by_size,
-      createdAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
     };
 
     await db.collection('buket').doc(buketId).set(newBuket);
@@ -135,42 +139,6 @@ const createBuketHandler = async (request, h) => {
   }
 };
 
-
-
-// Ambil semua buket (tanpa bahan)
-const getAllBuketHandler = async (request, h) => {
-  try {
-    const snapshot = await db.collection('buket').get();
-
-    const bukets = snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        buketId: data.buketId,
-        name: data.name,
-        size: data.size,
-        category: data.category,
-        image_url: data.image_url,
-        is_customizable: data.is_customizable,
-        processing_time: data.processing_time,
-        requires_photo: data.requires_photo,
-        type: data.type,
-        base_price_by_size: data.base_price_by_size,
-        created_at: data.created_at
-      };
-    });
-
-    return h.response({
-      status: 'success',
-      data: bukets
-    }).code(200);
-  } catch (error) {
-    console.error(error);
-    return h.response({
-      status: 'error',
-      message: 'Gagal mengambil data buket'
-    }).code(500);
-  }
-};
 
 // Ambil detail buket + bahan & total harga bahan berdasarkan ukuran
 const getBuketDetail = async (request, h) => {
@@ -208,20 +176,22 @@ const getBuketDetail = async (request, h) => {
     }
 
     return h.response({
-      buketId: buketData.buketId,
-      name: buketData.name,
-      image_url: buketData.image_url,
-      size: size.toLowerCase(),
-      category: buketData.category,
-      price: buketData.base_price_by_size?.[size.toLowerCase()] || 0,
-      processing_time: buketData.processing_time,
-      is_customizable: buketData.is_customizable,
-      requires_photo: buketData.requires_photo,
-      type: buketData.type,
-      created_at: buketData.created_at,
-      materials,
-      total_material_price: totalPrice
-    }).code(200);
+        buketId: buketData.buketId,
+        name: buketData.name,
+        image_url: buketData.image_url,
+        size: size.toLowerCase(),
+        category: buketData.category,
+        price: buketData.base_price_by_size?.[size.toLowerCase()] || 0,
+        processing_time: buketData.processing_time,
+        is_customizable: buketData.is_customizable,
+        requires_photo: buketData.requires_photo,
+        type: buketData.type,
+        service_fee: buketData.service_fee || 0,
+        created_at: buketData.created_at,
+        materials,
+        total_material_price: totalPrice
+      }).code(200);
+
   } catch (error) {
     console.error(error);
     return h.response({ message: 'Terjadi kesalahan.' }).code(500);
