@@ -8,7 +8,7 @@ const addToCartHandler = async (request, h) => {
 
   try {
     // Tambahkan dulu dokumen tanpa cartId
-    const docRef = await firebaseService.db.collection('carts').add({
+    const docRef = await db.collection('carts').add({
       userId,
       buketId,
       size,
