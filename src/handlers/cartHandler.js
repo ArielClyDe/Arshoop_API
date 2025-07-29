@@ -3,11 +3,9 @@ const { db } = require('../services/firebaseService');
 // Handler untuk menambahkan item ke cart
 const addToCartHandler = async (request, h) => {
   const { userId, buketId, size, quantity, customMaterials = [] } = request.payload;
-
   const created_at = new Date().toISOString();
 
   try {
-    // Tambahkan dulu dokumen tanpa cartId
     const docRef = await db.collection('carts').add({
       userId,
       buketId,
@@ -17,7 +15,6 @@ const addToCartHandler = async (request, h) => {
       created_at,
     });
 
-    // Update kembali dokumen dengan cartId-nya
     await docRef.update({ cartId: docRef.id });
 
     return h.response({
@@ -34,13 +31,12 @@ const addToCartHandler = async (request, h) => {
   }
 };
 
-
 // Handler untuk menghapus item dari cart
 const deleteCartItemHandler = async (request, h) => {
   const { cartId } = request.params;
 
   try {
-    await firebaseService.db.collection('carts').doc(cartId).delete();
+    await db.collection('carts').doc(cartId).delete();
     return h.response({
       status: 'success',
       message: 'Item dihapus dari keranjang'
@@ -162,7 +158,7 @@ const updateCartItemHandler = async (request, h) => {
   const { size, quantity, customMaterials } = request.payload;
 
   try {
-    const cartRef = firebaseService.db.collection('carts').doc(cartId);
+    const cartRef = db.collection('carts').doc(cartId);
     const cartSnap = await cartRef.get();
 
     if (!cartSnap.exists) {
@@ -191,7 +187,6 @@ const updateCartItemHandler = async (request, h) => {
     }).code(500);
   }
 };
-
 
 module.exports = {
   addToCartHandler,
