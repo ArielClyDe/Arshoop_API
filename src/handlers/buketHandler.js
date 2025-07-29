@@ -3,8 +3,8 @@ const { db } = require('../services/firebaseService');
 const cloudinary = require('../services/cloudinaryService');
 const streamifier = require('streamifier');
 
-// Fungsi bantu untuk hitung harga
-const calculateBasePriceBySize = async (materialsBySize, service_fee = 0) => {
+// Fungsi bantu hitung total material
+const calculateBasePriceBySize = async (materialsBySize) => {
   const basePrice = {};
 
   for (const size in materialsBySize) {
@@ -23,13 +23,13 @@ const calculateBasePriceBySize = async (materialsBySize, service_fee = 0) => {
       total += price * (item.quantity || 0);
     }
 
-    basePrice[size] = total + parseInt(service_fee); // Tambahkan service_fee ke total
+    basePrice[size] = total;
   }
 
   return basePrice;
 };
 
-// Handler createBuket tanpa simpan ke lokal
+// CREATE
 const createBuketHandler = async (request, h) => {
   const {
     name,
@@ -39,7 +39,7 @@ const createBuketHandler = async (request, h) => {
     requires_photo,
     is_customizable,
     processing_time,
-    service_fee = 0 // default 0 jika tidak dikirim
+    service_price
   } = request.payload;
 
   const image = request.payload.image;
@@ -67,16 +67,9 @@ const createBuketHandler = async (request, h) => {
     const uploadStream = () =>
       new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          {
-            folder: 'buket',
-            resource_type: 'image',
-          },
-          (error, result) => {
-            if (error) return reject(error);
-            resolve(result);
-          }
+          { folder: 'buket', resource_type: 'image' },
+          (error, result) => (error ? reject(error) : resolve(result))
         );
-
         streamifier.createReadStream(buffer).pipe(stream);
       });
 
@@ -102,11 +95,14 @@ const createBuketHandler = async (request, h) => {
       }).code(400);
     }
 
-    const numericServiceFee = parseInt(service_fee) || 0;
+    const base_price_by_size = await calculateBasePriceBySize(parsedMaterials);
+    const total_price_by_size = {};
 
-    const base_price_by_size = await calculateBasePriceBySize(parsedMaterials, numericServiceFee);
+    for (const size in base_price_by_size) {
+      total_price_by_size[size] = base_price_by_size[size] + parseInt(service_price || 0);
+    }
+
     const buketId = nanoid(16);
-
     const newBuket = {
       buketId,
       name,
@@ -116,10 +112,11 @@ const createBuketHandler = async (request, h) => {
       requires_photo: requires_photo === 'true' || requires_photo === true,
       is_customizable: is_customizable === 'true' || is_customizable === true,
       processing_time: parseInt(processing_time),
-      service_fee: numericServiceFee,
+      service_price: parseInt(service_price),
       image_url: imageUrl,
       materialsBySize: parsedMaterials,
       base_price_by_size,
+      total_price_by_size,
       created_at: new Date().toISOString(),
     };
 
@@ -139,8 +136,42 @@ const createBuketHandler = async (request, h) => {
   }
 };
 
+// GET ALL
+const getAllBuketHandler = async (request, h) => {
+  try {
+    const snapshot = await db.collection('buket').get();
 
-// Ambil detail buket + bahan & total harga bahan berdasarkan ukuran
+    const bukets = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        buketId: data.buketId,
+        name: data.name,
+        category: data.category,
+        image_url: data.image_url,
+        is_customizable: data.is_customizable,
+        processing_time: data.processing_time,
+        requires_photo: data.requires_photo,
+        type: data.type,
+        service_price: data.service_price,
+        base_price_by_size: data.base_price_by_size,
+        total_price_by_size: data.total_price_by_size,
+        created_at: data.created_at
+      };
+    });
+
+    return h.response({
+      status: 'success',
+      data: bukets
+    }).code(200);
+  } catch (error) {
+    return h.response({
+      status: 'error',
+      message: 'Gagal mengambil data buket'
+    }).code(500);
+  }
+};
+
+// GET DETAIL
 const getBuketDetail = async (request, h) => {
   const { buketId } = request.params;
   const { size = 'small' } = request.query;
@@ -175,30 +206,31 @@ const getBuketDetail = async (request, h) => {
       totalPrice += total;
     }
 
-    return h.response({
-        buketId: buketData.buketId,
-        name: buketData.name,
-        image_url: buketData.image_url,
-        size: size.toLowerCase(),
-        category: buketData.category,
-        price: buketData.base_price_by_size?.[size.toLowerCase()] || 0,
-        processing_time: buketData.processing_time,
-        is_customizable: buketData.is_customizable,
-        requires_photo: buketData.requires_photo,
-        type: buketData.type,
-        service_fee: buketData.service_fee || 0,
-        created_at: buketData.created_at,
-        materials,
-        total_material_price: totalPrice
-      }).code(200);
+    const totalBuketPrice = totalPrice + (buketData.service_price || 0);
 
+    return h.response({
+      buketId: buketData.buketId,
+      name: buketData.name,
+      image_url: buketData.image_url,
+      size: size.toLowerCase(),
+      category: buketData.category,
+      price: totalBuketPrice,
+      base_price: totalPrice,
+      service_price: buketData.service_price,
+      processing_time: buketData.processing_time,
+      is_customizable: buketData.is_customizable,
+      requires_photo: buketData.requires_photo,
+      type: buketData.type,
+      created_at: buketData.created_at,
+      materials,
+      total_material_price: totalPrice
+    }).code(200);
   } catch (error) {
-    console.error(error);
     return h.response({ message: 'Terjadi kesalahan.' }).code(500);
   }
 };
 
-// Edit buket (Admin)
+// UPDATE
 const updateBuketHandler = async (request, h) => {
   const { buketId } = request.params;
   const updateData = request.payload;
@@ -214,7 +246,6 @@ const updateBuketHandler = async (request, h) => {
       message: 'Buket berhasil diperbarui'
     }).code(200);
   } catch (error) {
-    console.error(error);
     return h.response({
       status: 'fail',
       message: 'Gagal memperbarui buket'
@@ -222,7 +253,7 @@ const updateBuketHandler = async (request, h) => {
   }
 };
 
-// Hapus buket (Admin)
+// DELETE
 const deleteBuketHandler = async (request, h) => {
   const { buketId } = request.params;
 
@@ -234,7 +265,6 @@ const deleteBuketHandler = async (request, h) => {
       message: 'Buket berhasil dihapus'
     }).code(200);
   } catch (error) {
-    console.error(error);
     return h.response({
       status: 'fail',
       message: 'Gagal menghapus buket'
