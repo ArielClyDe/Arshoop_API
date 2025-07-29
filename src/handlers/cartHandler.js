@@ -1,4 +1,4 @@
-const firebaseService = require('../services/firebaseService');
+const { db } = require('../services/firebaseService');
 
 // Handler untuk menambahkan item ke cart
 const addToCartHandler = async (request, h) => {
