@@ -150,7 +150,8 @@ const getCartByUserHandler = async (request, h) => {
     console.error('Error fetching carts:', error);
     return h.response({
       status: 'fail',
-      message: 'Gagal mengambil data cart'
+      message: 'Gagal mengambil data cart',
+      error: error.message,
     }).code(500);
   }
 };
