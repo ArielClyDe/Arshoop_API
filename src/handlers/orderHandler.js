@@ -2,129 +2,104 @@ const { db } = require('../services/firebaseService');
 
 // Membuat order dari cart (satu atau semua)
 const createOrderHandler = async (request, h) => {
-  const { userId, cartId } = request.payload;
+  const { userId, cartIds = [] } = request.payload;
+  const created_at = new Date().toISOString();
+  const orders = [];
 
   try {
-    let carts = [];
+    const cartSnapshot = await db.collection('carts')
+      .where('userId', '==', userId)
+      .get();
 
-    // Ambil satu cart jika ada cartId
-    if (cartId) {
-      const cartDoc = await db.collection('carts').doc(cartId).get();
-      if (!cartDoc.exists) {
-        return h.response({ status: 'fail', message: 'Cart tidak ditemukan' }).code(404);
+    const carts = [];
+    cartSnapshot.forEach((doc) => {
+      if (cartIds.length === 0 || cartIds.includes(doc.id)) {
+        carts.push({ cartId: doc.id, ...doc.data() });
       }
-      carts.push({ id: cartDoc.id, ...cartDoc.data() });
-    } else {
-      // Ambil semua cart milik user jika tidak ada cartId
-      const snapshot = await db.collection('carts').where('userId', '==', userId).get();
-      snapshot.forEach((doc) => {
-        carts.push({ id: doc.id, ...doc.data() });
-      });
-    }
+    });
 
     if (carts.length === 0) {
-      return h.response({ status: 'fail', message: 'Cart kosong' }).code(400);
+      return h.response({
+        status: 'fail',
+        message: 'Cart tidak ditemukan',
+      }).code(404);
     }
 
-    const createdOrders = [];
-
     for (const cart of carts) {
-      const { buketId, size, quantity, customMaterials = [], servicePrice = 0 } = cart;
+      const {
+        buket,
+        servicePrice = 0,
+        buketMaterials = [],
+        customMaterialDetails = [],
+        quantity = 1,
+      } = cart;
 
-      // Ambil data buket
-      const buketDoc = await db.collection('buket').doc(buketId).get();
-      if (!buketDoc.exists) continue;
-      const buketData = buketDoc.data();
+      const materials = [];
 
-      const materialsBySize = buketData.materialsBySize?.[size] || [];
-
-      // Ambil data default material
-      const defaultMaterials = [];
-      for (const item of materialsBySize) {
-        const materialDoc = await db.collection('materials').doc(item.materialId).get();
-        if (materialDoc.exists) {
-          const materialData = materialDoc.data();
-          defaultMaterials.push({
-            materialId: item.materialId,
-            name: materialData.name || '',
-            price: materialData.price || 0,
-            quantity: item.quantity * quantity,
-          });
-        }
+      // Template materials
+      for (const item of buketMaterials) {
+        materials.push({
+          materialId: item.materialId,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          total: item.price * item.quantity,
+          type: 'template'
+        });
       }
 
-      // Ambil data custom material
-      const customMaterialDetails = [];
-      for (const item of customMaterials) {
-        const materialDoc = await db.collection('materials').doc(item.materialId).get();
-        if (materialDoc.exists) {
-          const materialData = materialDoc.data();
-          customMaterialDetails.push({
-            materialId: item.materialId,
-            name: materialData.name || '',
-            price: materialData.price || 0,
-            quantity: item.quantity,
-          });
-        }
+      // Custom materials
+      for (const item of customMaterialDetails) {
+        materials.push({
+          materialId: item.materialId,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          total: item.price * item.quantity,
+          type: 'custom'
+        });
       }
 
-      // Gabungkan semua bahan
-      const allMaterials = [...defaultMaterials, ...customMaterialDetails];
-      const materialsTotal = allMaterials.reduce((sum, item) => sum + item.price * item.quantity, 0);
-      const totalPrice = materialsTotal + servicePrice;
+      const materialTotal = materials.reduce((sum, item) => sum + item.total, 0);
+      const totalPrice = materialTotal + servicePrice;
 
-      // Simpan ke koleksi orders
-      const orderRef = db.collection('orders').doc();
-      const orderId = orderRef.id;
-
-      const newOrder = {
-        orderId,
+      const newOrderRef = db.collection('orders').doc();
+      const orderData = {
+        orderId: newOrderRef.id,
         userId,
-        buketId,
-        size,
+        cartId: cart.cartId,
+        buketId: cart.buketId,
+        buket,
+        materials,
         quantity,
         servicePrice,
         totalPrice,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
+        created_at,
       };
 
-      await orderRef.set(newOrder);
+      await newOrderRef.set(orderData);
+      await db.collection('carts').doc(cart.cartId).delete(); // Hapus cart setelah dipesan
 
-      // Simpan detail bahan ke order_materials
-      const batch = db.batch();
-      allMaterials.forEach((material) => {
-        const orderMaterialRef = db.collection('order_materials').doc();
-        batch.set(orderMaterialRef, {
-          orderId,
-          materialId: material.materialId,
-          quantity: material.quantity,
-          price: material.price,
-        });
-      });
-      await batch.commit();
-
-      // Tambahkan order ke response
-      createdOrders.push({
-        orderId,
+      orders.push({
+        orderId: newOrderRef.id,
         servicePrice,
         totalPrice,
-        materials: allMaterials,
+        materials,
       });
-
-      // Hapus cart setelah order dibuat
-      await db.collection('carts').doc(cart.id).delete();
     }
 
     return h.response({
       status: 'success',
       message: 'Order berhasil dibuat',
-      data: createdOrders,
+      data: orders,
     }).code(201);
 
-  } catch (err) {
-    console.error(err);
-    return h.response({ status: 'fail', message: 'Gagal membuat order' }).code(500);
+  } catch (error) {
+    console.error('Gagal membuat order:', error);
+    return h.response({
+      status: 'fail',
+      message: 'Gagal membuat order',
+    }).code(500);
   }
 };
 
