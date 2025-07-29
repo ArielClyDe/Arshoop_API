@@ -63,7 +63,7 @@ module.exports = [
           type: Joi.string().valid('template', 'custom').required(),
           image: Joi.any().meta({ swaggerType: 'file' }).required(),
           materialsBySize: Joi.string().required(), // dikirim sebagai string JSON
-          service_price: Joi.alternatives().try(Joi.string(), Joi.number()).required()
+          service_price: Joi.number().required(),
         }),
         failAction: (request, h, err) => {
           console.error('VALIDATION ERROR:', err.message);
