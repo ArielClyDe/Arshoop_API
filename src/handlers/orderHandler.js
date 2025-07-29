@@ -206,9 +206,59 @@ const updateOrderStatusHandler = async (request, h) => {
     }).code(500);
   }
 };
+// Menampilkan detail satu order
+const getOrderByIdHandler = async (request, h) => {
+  const { orderId } = request.params;
+
+  try {
+    const orderDoc = await db.collection('orders').doc(orderId).get();
+    if (!orderDoc.exists) {
+      return h.response({ status: 'fail', message: 'Order tidak ditemukan' }).code(404);
+    }
+
+    const order = orderDoc.data();
+
+    // Ambil data buket
+    const buketDoc = await db.collection('buket').doc(order.buketId).get();
+    order.buket = buketDoc.exists ? { buketId: buketDoc.id, ...buketDoc.data() } : null;
+
+    // Ambil data bahan dari order_materials
+    const materialsSnapshot = await db.collection('order_materials')
+      .where('orderId', '==', orderId)
+      .get();
+
+    order.materials = [];
+    for (const matDoc of materialsSnapshot.docs) {
+      const { materialId, quantity, price } = matDoc.data();
+      const materialDetailDoc = await db.collection('materials').doc(materialId).get();
+      const name = materialDetailDoc.exists ? materialDetailDoc.data().name : 'Unknown';
+
+      order.materials.push({
+        materialId,
+        name,
+        quantity,
+        price,
+        total: quantity * price,
+      });
+    }
+
+    return h.response({
+      status: 'success',
+      data: order,
+    });
+
+  } catch (err) {
+    console.error('Error in getOrderByIdHandler:', err.message);
+    return h.response({
+      status: 'fail',
+      message: 'Gagal mengambil detail order',
+    }).code(500);
+  }
+};
 
 module.exports = {
   createOrderHandler,
   getOrdersByUserHandler,
   updateOrderStatusHandler,
+  getOrderByIdHandler
 };

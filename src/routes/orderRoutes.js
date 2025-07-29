@@ -39,6 +39,17 @@ module.exports = [
      },
       handler: orderHandler.updateOrderStatusHandler
     }
-  } 
+  },
+  {
+  method: 'GET',
+  path: '/orders/detail/{orderId}',
+  options: {
+    tags: ['api'],
+    description: 'Menampilkan detail satu order',
+    handler: orderHandler.getOrderByIdHandler,
+  }
+}
+
+  
 
 ];
