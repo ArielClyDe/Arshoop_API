@@ -2,7 +2,7 @@ const { db } = require('../services/firebaseService');
 
 // Handler untuk menambahkan item ke cart
 const addToCartHandler = async (request, h) => {
-  const { userId, buketId, size, quantity, customMaterials = [] } = request.payload;
+  const { userId, buketId, size, quantity, customMaterials = [], servicePrice = 0 } = request.payload;
   const created_at = new Date().toISOString();
 
   try {
@@ -12,6 +12,7 @@ const addToCartHandler = async (request, h) => {
       size,
       quantity,
       customMaterials,
+      servicePrice, // <-- Tambahkan ini
       created_at,
     });
 
@@ -30,6 +31,7 @@ const addToCartHandler = async (request, h) => {
     }).code(500);
   }
 };
+
 
 // Handler untuk menghapus item dari cart
 const deleteCartItemHandler = async (request, h) => {
