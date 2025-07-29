@@ -63,6 +63,7 @@ module.exports = [
           type: Joi.string().valid('template', 'custom').required(),
           image: Joi.any().meta({ swaggerType: 'file' }).required(),
           materialsBySize: Joi.string().required(), // dikirim sebagai string JSON
+          service_price: Joi.alternatives().try(Joi.string(), Joi.number()).required()
         }),
         failAction: (request, h, err) => {
           console.error('VALIDATION ERROR:', err.message);
@@ -92,6 +93,7 @@ module.exports = [
           is_customizable: Joi.boolean(),
           processing_time: Joi.alternatives().try(Joi.string(), Joi.number()),
           requires_photo: Joi.boolean(),
+          service_price: Joi.number().integer().min(0),
           type: Joi.string().valid('template', 'custom'),
           materialsBySize: Joi.object({
             small: Joi.array().items(Joi.object({
