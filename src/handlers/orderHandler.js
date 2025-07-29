@@ -7,6 +7,7 @@ const createOrderHandler = async (request, h) => {
   try {
     let carts = [];
 
+    // Ambil satu cart jika ada cartId
     if (cartId) {
       const cartDoc = await db.collection('carts').doc(cartId).get();
       if (!cartDoc.exists) {
@@ -14,6 +15,7 @@ const createOrderHandler = async (request, h) => {
       }
       carts.push({ id: cartDoc.id, ...cartDoc.data() });
     } else {
+      // Ambil semua cart milik user jika tidak ada cartId
       const snapshot = await db.collection('carts').where('userId', '==', userId).get();
       snapshot.forEach((doc) => {
         carts.push({ id: doc.id, ...doc.data() });
@@ -27,14 +29,16 @@ const createOrderHandler = async (request, h) => {
     const createdOrders = [];
 
     for (const cart of carts) {
-      const { buketId, size, quantity, customMaterials = [] } = cart;
+      const { buketId, size, quantity, customMaterials = [], servicePrice = 0 } = cart;
 
+      // Ambil data buket
       const buketDoc = await db.collection('buket').doc(buketId).get();
       if (!buketDoc.exists) continue;
       const buketData = buketDoc.data();
 
       const materialsBySize = buketData.materialsBySize?.[size] || [];
 
+      // Ambil data default material
       const defaultMaterials = [];
       for (const item of materialsBySize) {
         const materialDoc = await db.collection('materials').doc(item.materialId).get();
@@ -49,6 +53,7 @@ const createOrderHandler = async (request, h) => {
         }
       }
 
+      // Ambil data custom material
       const customMaterialDetails = [];
       for (const item of customMaterials) {
         const materialDoc = await db.collection('materials').doc(item.materialId).get();
@@ -63,9 +68,12 @@ const createOrderHandler = async (request, h) => {
         }
       }
 
+      // Gabungkan semua bahan
       const allMaterials = [...defaultMaterials, ...customMaterialDetails];
-      const totalPrice = allMaterials.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      const materialsTotal = allMaterials.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      const totalPrice = materialsTotal + servicePrice;
 
+      // Simpan ke koleksi orders
       const orderRef = db.collection('orders').doc();
       const orderId = orderRef.id;
 
@@ -75,6 +83,7 @@ const createOrderHandler = async (request, h) => {
         buketId,
         size,
         quantity,
+        servicePrice,
         totalPrice,
         status: 'pending',
         createdAt: new Date().toISOString(),
@@ -82,6 +91,7 @@ const createOrderHandler = async (request, h) => {
 
       await orderRef.set(newOrder);
 
+      // Simpan detail bahan ke order_materials
       const batch = db.batch();
       allMaterials.forEach((material) => {
         const orderMaterialRef = db.collection('order_materials').doc();
@@ -94,12 +104,15 @@ const createOrderHandler = async (request, h) => {
       });
       await batch.commit();
 
+      // Tambahkan order ke response
       createdOrders.push({
         orderId,
+        servicePrice,
         totalPrice,
         materials: allMaterials,
       });
 
+      // Hapus cart setelah order dibuat
       await db.collection('carts').doc(cart.id).delete();
     }
 
