@@ -26,13 +26,19 @@ const createOrderHandler = async (request, h) => {
     }
 
     for (const cart of carts) {
-      const {
-        buket,
-        servicePrice = 0,
-        buketMaterials = [],
-        customMaterialDetails = [],
-        quantity = 1,
-      } = cart;
+      let { buket, buketId, servicePrice = 0, buketMaterials = [], customMaterialDetails = [], quantity = 1 } = cart;
+
+// Ambil buket dari Firestore kalau buket tidak tersedia
+if (!buket && buketId) {
+  const buketDoc = await db.collection('bukets').doc(buketId).get();
+  if (buketDoc.exists) {
+    buket = buketDoc.data();
+  } else {
+    console.warn(`Buket tidak ditemukan untuk ID: ${buketId}`);
+    continue; // Skip order ini, atau kamu bisa throw error juga
+  }
+}
+
 
       const materials = [];
 
