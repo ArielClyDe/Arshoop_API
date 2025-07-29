@@ -2,110 +2,129 @@ const { db } = require('../services/firebaseService');
 
 // Membuat order dari cart (satu atau semua)
 const createOrderHandler = async (request, h) => {
-  const { userId, cartIds = [] } = request.payload;
-  const created_at = new Date().toISOString();
-  const orders = [];
+  const { userId, cartId } = request.payload;
 
   try {
-    const cartSnapshot = await db.collection('carts')
-      .where('userId', '==', userId)
-      .get();
+    let carts = [];
 
-    const carts = [];
-    cartSnapshot.forEach((doc) => {
-      if (cartIds.length === 0 || cartIds.includes(doc.id)) {
-        carts.push({ cartId: doc.id, ...doc.data() });
+    // Ambil satu cart jika ada cartId
+    if (cartId) {
+      const cartDoc = await db.collection('carts').doc(cartId).get();
+      if (!cartDoc.exists) {
+        return h.response({ status: 'fail', message: 'Cart tidak ditemukan' }).code(404);
       }
-    });
-
-    if (carts.length === 0) {
-      return h.response({
-        status: 'fail',
-        message: 'Cart tidak ditemukan',
-      }).code(404);
+      carts.push({ id: cartDoc.id, ...cartDoc.data() });
+    } else {
+      // Ambil semua cart milik user jika tidak ada cartId
+      const snapshot = await db.collection('carts').where('userId', '==', userId).get();
+      snapshot.forEach((doc) => {
+        carts.push({ id: doc.id, ...doc.data() });
+      });
     }
 
+    if (carts.length === 0) {
+      return h.response({ status: 'fail', message: 'Cart kosong' }).code(400);
+    }
+
+    const createdOrders = [];
+
     for (const cart of carts) {
-      let { buket, buketId, servicePrice = 0, buketMaterials = [], customMaterialDetails = [], quantity = 1 } = cart;
+      const { buketId, size, quantity, customMaterials = [], servicePrice = 0 } = cart;
 
-// Ambil buket dari Firestore kalau buket tidak tersedia
-if (!buket && buketId) {
-  const buketDoc = await db.collection('bukets').doc(buketId).get();
-  if (buketDoc.exists) {
-    buket = buketDoc.data();
-  } else {
-    console.warn(`Buket tidak ditemukan untuk ID: ${buketId}`);
-    continue; // Skip order ini, atau kamu bisa throw error juga
-  }
-}
+      // Ambil data buket
+      const buketDoc = await db.collection('buket').doc(buketId).get();
+      if (!buketDoc.exists) continue;
+      const buketData = buketDoc.data();
 
+      const materialsBySize = buketData.materialsBySize?.[size] || [];
 
-      const materials = [];
-
-      // Template materials
-      for (const item of buketMaterials) {
-        materials.push({
-          materialId: item.materialId,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-          total: item.price * item.quantity,
-          type: 'template'
-        });
+      // Ambil data default material
+      const defaultMaterials = [];
+      for (const item of materialsBySize) {
+        const materialDoc = await db.collection('materials').doc(item.materialId).get();
+        if (materialDoc.exists) {
+          const materialData = materialDoc.data();
+          defaultMaterials.push({
+            materialId: item.materialId,
+            name: materialData.name || '',
+            price: materialData.price || 0,
+            quantity: item.quantity * quantity,
+          });
+        }
       }
 
-      // Custom materials
-      for (const item of customMaterialDetails) {
-        materials.push({
-          materialId: item.materialId,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-          total: item.price * item.quantity,
-          type: 'custom'
-        });
+      // Ambil data custom material
+      const customMaterialDetails = [];
+      for (const item of customMaterials) {
+        const materialDoc = await db.collection('materials').doc(item.materialId).get();
+        if (materialDoc.exists) {
+          const materialData = materialDoc.data();
+          customMaterialDetails.push({
+            materialId: item.materialId,
+            name: materialData.name || '',
+            price: materialData.price || 0,
+            quantity: item.quantity,
+          });
+        }
       }
 
-      const materialTotal = materials.reduce((sum, item) => sum + item.total, 0);
-      const totalPrice = materialTotal + servicePrice;
+      // Gabungkan semua bahan
+      const allMaterials = [...defaultMaterials, ...customMaterialDetails];
+      const materialsTotal = allMaterials.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      const totalPrice = materialsTotal + servicePrice;
 
-      const newOrderRef = db.collection('orders').doc();
-      const orderData = {
-        orderId: newOrderRef.id,
+      // Simpan ke koleksi orders
+      const orderRef = db.collection('orders').doc();
+      const orderId = orderRef.id;
+
+      const newOrder = {
+        orderId,
         userId,
-        cartId: cart.cartId,
-        buketId: cart.buketId,
-        buket,
-        materials,
+        buketId,
+        size,
         quantity,
         servicePrice,
         totalPrice,
-        created_at,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
       };
 
-      await newOrderRef.set(orderData);
-      await db.collection('carts').doc(cart.cartId).delete(); // Hapus cart setelah dipesan
+      await orderRef.set(newOrder);
 
-      orders.push({
-        orderId: newOrderRef.id,
+      // Simpan detail bahan ke order_materials
+      const batch = db.batch();
+      allMaterials.forEach((material) => {
+        const orderMaterialRef = db.collection('order_materials').doc();
+        batch.set(orderMaterialRef, {
+          orderId,
+          materialId: material.materialId,
+          quantity: material.quantity,
+          price: material.price,
+        });
+      });
+      await batch.commit();
+
+      // Tambahkan order ke response
+      createdOrders.push({
+        orderId,
         servicePrice,
         totalPrice,
-        materials,
+        materials: allMaterials,
       });
+
+      // Hapus cart setelah order dibuat
+      await db.collection('carts').doc(cart.id).delete();
     }
 
     return h.response({
       status: 'success',
       message: 'Order berhasil dibuat',
-      data: orders,
+      data: createdOrders,
     }).code(201);
 
-  } catch (error) {
-    console.error('Gagal membuat order:', error);
-    return h.response({
-      status: 'fail',
-      message: 'Gagal membuat order',
-    }).code(500);
+  } catch (err) {
+    console.error(err);
+    return h.response({ status: 'fail', message: 'Gagal membuat order' }).code(500);
   }
 };
 
