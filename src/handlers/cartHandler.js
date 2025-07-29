@@ -1,18 +1,31 @@
 const { db } = require('../services/firebaseService');
 
-// Handler untuk menambahkan item ke cart
+// Tambahkan item ke cart
 const addToCartHandler = async (request, h) => {
-  const { userId, buketId, size, quantity, customMaterials = [], servicePrice = 0 } = request.payload;
+  const { userId, buketId, size, quantity, customMaterials = [] } = request.payload;
   const created_at = new Date().toISOString();
 
   try {
+    // Ambil buket untuk ambil service_price
+    const buketDoc = await db.collection('buket').doc(buketId).get();
+    if (!buketDoc.exists) {
+      return h.response({
+        status: 'fail',
+        message: 'Buket tidak ditemukan',
+      }).code(404);
+    }
+
+    const buketData = buketDoc.data();
+    const servicePrice = buketData.service_price || 0;
+
+    // Simpan ke collection carts
     const docRef = await db.collection('carts').add({
       userId,
       buketId,
       size,
       quantity,
       customMaterials,
-      servicePrice, // <-- Tambahkan ini
+      servicePrice,
       created_at,
     });
 
@@ -21,19 +34,18 @@ const addToCartHandler = async (request, h) => {
     return h.response({
       status: 'success',
       message: 'Item ditambahkan ke keranjang',
-      data: { cartId: docRef.id }
+      data: { cartId: docRef.id },
     }).code(201);
   } catch (err) {
     console.error(err);
     return h.response({
       status: 'fail',
-      message: 'Gagal menambahkan ke keranjang'
+      message: 'Gagal menambahkan ke keranjang',
     }).code(500);
   }
 };
 
-
-// Handler untuk menghapus item dari cart
+// Hapus item dari cart
 const deleteCartItemHandler = async (request, h) => {
   const { cartId } = request.params;
 
@@ -41,18 +53,18 @@ const deleteCartItemHandler = async (request, h) => {
     await db.collection('carts').doc(cartId).delete();
     return h.response({
       status: 'success',
-      message: 'Item dihapus dari keranjang'
+      message: 'Item dihapus dari keranjang',
     }).code(200);
   } catch (err) {
     console.error(err);
     return h.response({
       status: 'fail',
-      message: 'Gagal menghapus item keranjang'
+      message: 'Gagal menghapus item keranjang',
     }).code(500);
   }
 };
 
-// Handler untuk mendapatkan semua cart milik user
+// Ambil semua cart milik user
 const getCartByUserHandler = async (request, h) => {
   const { userId } = request.params;
 
@@ -67,18 +79,18 @@ const getCartByUserHandler = async (request, h) => {
 
     for (const doc of cartsSnapshot.docs) {
       const cartData = doc.data();
-      const { buketId, size, quantity, customMaterials = [] } = cartData;
+      const { buketId, size, quantity, customMaterials = [], servicePrice = 0 } = cartData;
 
       const buketDoc = await db.collection('buket').doc(buketId).get();
       if (!buketDoc.exists) continue;
 
       const buketData = buketDoc.data();
       const materials = buketData.materialsBySize?.[size] || [];
-      const servicePrice = buketData.service_price || 0;
 
       let singleItemTotal = 0;
       const buketMaterials = [];
 
+      // Hitung bahan dari buket
       for (const item of materials) {
         const materialDoc = await db.collection('materials').doc(item.materialId).get();
         if (materialDoc.exists) {
@@ -96,6 +108,7 @@ const getCartByUserHandler = async (request, h) => {
         }
       }
 
+      // Hitung custom material
       const customMaterialDetails = [];
       for (const custom of customMaterials) {
         const customDoc = await db.collection('materials').doc(custom.materialId).get();
@@ -129,19 +142,19 @@ const getCartByUserHandler = async (request, h) => {
           processing_time: buketData.processing_time,
           is_customizable: buketData.is_customizable,
           requires_photo: buketData.requires_photo,
-          type: buketData.type
+          type: buketData.type,
         },
         servicePrice,
         buketMaterials,
         customMaterialDetails,
-        totalPrice
+        totalPrice,
       });
     }
 
     return h.response({
       status: 'success',
       data: carts,
-      totalPrice: grandTotal
+      totalPrice: grandTotal,
     }).code(200);
 
   } catch (error) {
@@ -154,7 +167,7 @@ const getCartByUserHandler = async (request, h) => {
   }
 };
 
-// Handler untuk mengupdate item di cart
+// Update item di cart
 const updateCartItemHandler = async (request, h) => {
   const { cartId } = request.params;
   const { size, quantity, customMaterials } = request.payload;
@@ -166,7 +179,7 @@ const updateCartItemHandler = async (request, h) => {
     if (!cartSnap.exists) {
       return h.response({
         status: 'fail',
-        message: 'Item cart tidak ditemukan'
+        message: 'Item cart tidak ditemukan',
       }).code(404);
     }
 
@@ -179,13 +192,13 @@ const updateCartItemHandler = async (request, h) => {
 
     return h.response({
       status: 'success',
-      message: 'Item keranjang berhasil diperbarui'
+      message: 'Item keranjang berhasil diperbarui',
     }).code(200);
   } catch (err) {
     console.error(err);
     return h.response({
       status: 'fail',
-      message: 'Gagal memperbarui item keranjang'
+      message: 'Gagal memperbarui item keranjang',
     }).code(500);
   }
 };
@@ -194,5 +207,5 @@ module.exports = {
   addToCartHandler,
   getCartByUserHandler,
   deleteCartItemHandler,
-  updateCartItemHandler
+  updateCartItemHandler,
 };
