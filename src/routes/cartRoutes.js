@@ -25,6 +25,7 @@ module.exports = [
     },
     handler: cartHandler.addToCartHandler,
   },
+
   {
     method: 'GET',
     path: '/cart/{userId}',
@@ -39,6 +40,7 @@ module.exports = [
     },
     handler: cartHandler.getCartByUserHandler,
   },
+
   {
     method: 'DELETE',
     path: '/cart/{cartId}',
@@ -53,6 +55,7 @@ module.exports = [
     },
     handler: cartHandler.deleteCartItemHandler,
   },
+
   {
     method: 'PUT',
     path: '/cart/{cartId}',
@@ -64,15 +67,15 @@ module.exports = [
           cartId: Joi.string().required()
         }),
         payload: Joi.object({
-          size: Joi.string().valid('small', 'medium', 'large').optional(),
-          quantity: Joi.number().integer().min(1).optional(),
+          size: Joi.string().valid('small', 'medium', 'large'),
+          quantity: Joi.number().integer().min(1),
           customMaterials: Joi.array().items(
             Joi.object({
               materialId: Joi.string().required(),
               quantity: Joi.number().integer().min(1).required()
             })
-          ).optional()
-        }).min(1)
+          )
+        }).min(1) // Wajib setidaknya ada satu field yang diubah
       }
     },
     handler: cartHandler.updateCartItemHandler

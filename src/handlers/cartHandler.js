@@ -57,72 +57,70 @@ const deleteCartItemHandler = async (request, h) => {
 // Handler untuk mendapatkan semua cart milik user
 const getCartByUserHandler = async (request, h) => {
   const { userId } = request.params;
-  console.log('👉 userId param:', userId);
 
   try {
-    const cartsSnapshot = await firebaseService.db
-      .collection('carts')
-      .where('userId', '==', userId)
-      .get();
-
-    console.log('📦 Total dokumen ditemukan:', cartsSnapshot.size);
+    const cartsSnapshot = await db.collection('carts').where('userId', '==', userId).get();
+    if (cartsSnapshot.empty) {
+      return h.response({ carts: [], totalPrice: 0 }).code(200);
+    }
 
     const carts = [];
+    let grandTotal = 0;
 
     for (const doc of cartsSnapshot.docs) {
-      console.log('🔎 Dokumen ditemukan:', doc.id, doc.data());
       const cartData = doc.data();
-      const { buketId, size, quantity = 1, customMaterials = [] } = cartData;
+      const { buketId, size, quantity, customMaterials = [] } = cartData;
 
-      // Ambil detail buket
-      const buketDoc = await firebaseService.db.collection('buket').doc(buketId).get();
-      if (!buketDoc.exists) {
-        console.log(`🚫 Buket tidak ditemukan: ${buketId}`);
-        continue;
-      }
+      const buketDoc = await db.collection('buket').doc(buketId).get();
+      if (!buketDoc.exists) continue;
+
       const buketData = buketDoc.data();
-      const materialsForSize = buketData.materialsBySize?.[size] || [];
+      const materials = buketData.materialsBySize?.[size] || [];
+      const servicePrice = buketData.service_price || 0;
 
-      // Ambil detail bahan utama
+      let singleItemTotal = 0;
       const buketMaterials = [];
-      for (const item of materialsForSize) {
-        const matDoc = await firebaseService.db.collection('materials').doc(item.materialId).get();
-        if (matDoc.exists) {
-          const matData = matDoc.data();
+
+      for (const item of materials) {
+        const materialDoc = await db.collection('materials').doc(item.materialId).get();
+        if (materialDoc.exists) {
+          const materialData = materialDoc.data();
+          const totalMaterialPrice = materialData.price * item.quantity;
+          singleItemTotal += totalMaterialPrice;
+
           buketMaterials.push({
             materialId: item.materialId,
-            name: matData.name,
-            price: matData.price,
+            name: materialData.name,
+            price: materialData.price,
             quantity: item.quantity,
-            total: item.quantity * matData.price
+            total: totalMaterialPrice,
           });
         }
       }
 
-      // Ambil detail bahan tambahan (customMaterials)
       const customMaterialDetails = [];
-      for (const cm of customMaterials) {
-        const matDoc = await firebaseService.db.collection('materials').doc(cm.materialId).get();
-        if (matDoc.exists) {
-          const matData = matDoc.data();
+      for (const custom of customMaterials) {
+        const customDoc = await db.collection('materials').doc(custom.materialId).get();
+        if (customDoc.exists) {
+          const customData = customDoc.data();
+          const totalCustomPrice = customData.price * custom.quantity;
+          singleItemTotal += totalCustomPrice;
+
           customMaterialDetails.push({
-            materialId: cm.materialId,
-            name: matData.name,
-            price: matData.price,
-            quantity: cm.quantity,
-            total: cm.quantity * matData.price
+            materialId: custom.materialId,
+            name: customData.name,
+            price: customData.price,
+            quantity: custom.quantity,
+            total: totalCustomPrice,
           });
         }
       }
 
-      // Hitung total
-      const singleItemTotal = [...buketMaterials, ...customMaterialDetails]
-        .reduce((sum, item) => sum + item.total, 0);
-
-      const totalPrice = singleItemTotal * quantity;
+      const totalPrice = (singleItemTotal + servicePrice) * quantity;
+      grandTotal += totalPrice;
 
       carts.push({
-        cartId: doc.id, // tambahkan cartId di level atas
+        cartId: doc.id,
         ...cartData,
         buket: {
           buketId,
@@ -135,6 +133,7 @@ const getCartByUserHandler = async (request, h) => {
           requires_photo: buketData.requires_photo,
           type: buketData.type
         },
+        servicePrice,
         buketMaterials,
         customMaterialDetails,
         totalPrice
@@ -143,17 +142,19 @@ const getCartByUserHandler = async (request, h) => {
 
     return h.response({
       status: 'success',
-      data: carts
+      data: carts,
+      totalPrice: grandTotal
     }).code(200);
 
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error('Error fetching carts:', error);
     return h.response({
       status: 'fail',
-      message: 'Gagal mengambil data keranjang'
+      message: 'Gagal mengambil data cart'
     }).code(500);
   }
 };
+
 // Handler untuk mengupdate item di cart
 const updateCartItemHandler = async (request, h) => {
   const { cartId } = request.params;
