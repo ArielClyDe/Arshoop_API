@@ -172,6 +172,7 @@ const getAllBuketHandler = async (request, h) => {
 };
 
 // GET DETAIL
+// GET DETAIL (tanpa field 'materials')
 const getBuketDetail = async (request, h) => {
   const { buketId } = request.params;
   const { size = 'small' } = request.query;
@@ -186,7 +187,6 @@ const getBuketDetail = async (request, h) => {
     const selectedSize = size.toLowerCase();
     const selectedMaterials = buketData.materialsBySize?.[selectedSize] || [];
 
-    const materials = [];
     let totalPrice = 0;
 
     for (const item of selectedMaterials) {
@@ -195,15 +195,6 @@ const getBuketDetail = async (request, h) => {
 
       const materialData = materialDoc.data();
       const total = materialData.price * item.quantity;
-
-      materials.push({
-        materialId: item.materialId,
-        name: materialData.name,
-        price: materialData.price,
-        quantity: item.quantity,
-        total
-      });
-
       totalPrice += total;
     }
 
@@ -225,13 +216,11 @@ const getBuketDetail = async (request, h) => {
         requires_photo: buketData.requires_photo,
         type: buketData.type,
         created_at: buketData.created_at,
-        materials,
-        total_material_price: totalPrice,
 
         // Tambahan untuk frontend:
         base_price_by_size: buketData.base_price_by_size,
         total_price_by_size: buketData.total_price_by_size,
-        materialsBySize: buketData.materialsBySize
+        materialsBySize: buketData.materialsBySize,
       }
     }).code(200);
 
@@ -240,6 +229,7 @@ const getBuketDetail = async (request, h) => {
     return h.response({ message: 'Terjadi kesalahan.' }).code(500);
   }
 };
+
 
 
 // UPDATE
