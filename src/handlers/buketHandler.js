@@ -183,7 +183,8 @@ const getBuketDetail = async (request, h) => {
     }
 
     const buketData = buketDoc.data();
-    const selectedMaterials = buketData.materialsBySize?.[size.toLowerCase()] || [];
+    const selectedSize = size.toLowerCase();
+    const selectedMaterials = buketData.materialsBySize?.[selectedSize] || [];
 
     const materials = [];
     let totalPrice = 0;
@@ -209,26 +210,37 @@ const getBuketDetail = async (request, h) => {
     const totalBuketPrice = totalPrice + (buketData.service_price || 0);
 
     return h.response({
-      buketId: buketData.buketId,
-      name: buketData.name,
-      image_url: buketData.image_url,
-      size: size.toLowerCase(),
-      category: buketData.category,
-      price: totalBuketPrice,
-      base_price: totalPrice,
-      service_price: buketData.service_price,
-      processing_time: buketData.processing_time,
-      is_customizable: buketData.is_customizable,
-      requires_photo: buketData.requires_photo,
-      type: buketData.type,
-      created_at: buketData.created_at,
-      materials,
-      total_material_price: totalPrice
+      status: 'success',
+      data: {
+        buketId: buketDoc.id,
+        name: buketData.name,
+        image_url: buketData.image_url,
+        size: selectedSize,
+        category: buketData.category,
+        price: totalBuketPrice,
+        base_price: totalPrice,
+        service_price: buketData.service_price,
+        processing_time: buketData.processing_time,
+        is_customizable: buketData.is_customizable,
+        requires_photo: buketData.requires_photo,
+        type: buketData.type,
+        created_at: buketData.created_at,
+        materials,
+        total_material_price: totalPrice,
+
+        // Tambahan untuk frontend:
+        base_price_by_size: buketData.base_price_by_size,
+        total_price_by_size: buketData.total_price_by_size,
+        materialsBySize: buketData.materialsBySize
+      }
     }).code(200);
+
   } catch (error) {
+    console.error(error);
     return h.response({ message: 'Terjadi kesalahan.' }).code(500);
   }
 };
+
 
 // UPDATE
 const updateBuketHandler = async (request, h) => {
