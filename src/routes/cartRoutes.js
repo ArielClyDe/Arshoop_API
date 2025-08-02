@@ -19,8 +19,13 @@ module.exports = [
               materialId: Joi.string().required(),
               quantity: Joi.number().integer().min(1).required()
             })
-          ).optional()
-        }),
+          ).optional(),
+
+          // ✅ Tambahkan ini agar cocok dengan data dari Android
+          requestDate: Joi.string().optional().allow(null),
+          orderNote: Joi.string().optional().allow(''),
+          totalPrice: Joi.number().optional()
+        })
       },
     },
     handler: cartHandler.addToCartHandler,
