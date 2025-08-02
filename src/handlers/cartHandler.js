@@ -5,8 +5,11 @@ const addToCartHandler = async (request, h) => {
   const {
     userId,
     buketId,
+    name,
+    imageUrl,
     size,
     quantity,
+    basePrice = 0,
     customMaterials = [],
     requestDate = null,
     orderNote = '',
@@ -30,13 +33,16 @@ const addToCartHandler = async (request, h) => {
     const docRef = await db.collection('carts').add({
       userId,
       buketId,
+      name,
+      imageUrl,
       size,
       quantity,
+      basePrice,
       customMaterials,
       servicePrice,
-      requestDate,       // Tambahan
-      orderNote,         // Tambahan
-      totalPrice,        // Tambahan (jika kamu sudah menghitung dari client)
+      requestDate,
+      orderNote,
+      totalPrice,
       created_at,
     });
 
@@ -55,6 +61,7 @@ const addToCartHandler = async (request, h) => {
     }).code(500);
   }
 };
+
 
 
 // Hapus item dari cart

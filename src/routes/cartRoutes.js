@@ -9,24 +9,28 @@ module.exports = [
       description: 'Tambah item ke keranjang',
       tags: ['api'],
       validate: {
-        payload: Joi.object({
-          userId: Joi.string().required(),
-          buketId: Joi.string().required(),
-          size: Joi.string().valid('small', 'medium', 'large').required(),
-          quantity: Joi.number().integer().min(1).required(),
-          customMaterials: Joi.array().items(
-            Joi.object({
-              materialId: Joi.string().required(),
-              quantity: Joi.number().integer().min(1).required()
-            })
-          ).optional(),
+  payload: Joi.object({
+    userId: Joi.string().required(),
+    buketId: Joi.string().required(),
+    name: Joi.string().optional(),
+    imageUrl: Joi.string().uri().optional(),
+    size: Joi.string().valid('small', 'medium', 'large').required(),
+    quantity: Joi.number().integer().min(1).required(),
+    basePrice: Joi.number().optional(),
 
-          // ✅ Tambahkan ini agar cocok dengan data dari Android
-          requestDate: Joi.string().optional().allow(null),
-          orderNote: Joi.string().optional().allow(''),
-          totalPrice: Joi.number().optional()
-        })
-      },
+    customMaterials: Joi.array().items(
+      Joi.object({
+        name: Joi.string().optional(),
+        price: Joi.number().optional(),
+        quantity: Joi.number().integer().min(1).required()
+      })
+    ).optional(),
+
+    requestDate: Joi.string().optional().allow(null),
+    orderNote: Joi.string().optional().allow(''),
+    totalPrice: Joi.number().optional()
+  })
+},
     },
     handler: cartHandler.addToCartHandler,
   },
