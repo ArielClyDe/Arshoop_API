@@ -189,7 +189,14 @@ const getCartByUserHandler = async (request, h) => {
 // Update item di cart
 const updateCartItemHandler = async (request, h) => {
   const { cartId } = request.params;
-  const { size, quantity, customMaterials } = request.payload;
+  const {
+    size,
+    quantity,
+    customMaterials,
+    requestDate,
+    orderNote,
+    totalPrice
+  } = request.payload;
 
   try {
     const cartRef = db.collection('carts').doc(cartId);
@@ -206,6 +213,9 @@ const updateCartItemHandler = async (request, h) => {
     if (size) updateData.size = size;
     if (quantity !== undefined) updateData.quantity = quantity;
     if (customMaterials) updateData.customMaterials = customMaterials;
+    if (requestDate) updateData.requestDate = requestDate;
+    if (orderNote !== undefined) updateData.orderNote = orderNote;
+    if (totalPrice !== undefined) updateData.totalPrice = totalPrice;
 
     await cartRef.update(updateData);
 
@@ -221,6 +231,7 @@ const updateCartItemHandler = async (request, h) => {
     }).code(500);
   }
 };
+
 
 module.exports = {
   addToCartHandler,

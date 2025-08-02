@@ -65,29 +65,35 @@ module.exports = [
     },
     handler: cartHandler.deleteCartItemHandler,
   },
+{
+  method: 'PUT',
+  path: '/cart/{cartId}',
+  options: {
+    description: 'Update item keranjang berdasarkan cartId',
+    tags: ['api'],
+    validate: {
+      params: Joi.object({
+        cartId: Joi.string().required()
+      }),
+      payload: Joi.object({
+        size: Joi.string().valid('small', 'medium', 'large'),
+        quantity: Joi.number().integer().min(1),
 
-  {
-    method: 'PUT',
-    path: '/cart/{cartId}',
-    options: {
-      description: 'Update item keranjang berdasarkan cartId',
-      tags: ['api'],
-      validate: {
-        params: Joi.object({
-          cartId: Joi.string().required()
-        }),
-        payload: Joi.object({
-          size: Joi.string().valid('small', 'medium', 'large'),
-          quantity: Joi.number().integer().min(1),
-          customMaterials: Joi.array().items(
-            Joi.object({
-              materialId: Joi.string().required(),
-              quantity: Joi.number().integer().min(1).required()
-            })
-          )
-        }).min(1) // Wajib setidaknya ada satu field yang diubah
-      }
-    },
-    handler: cartHandler.updateCartItemHandler
-  }
+        customMaterials: Joi.array().items(
+          Joi.object({
+            materialId: Joi.string().required(),
+            quantity: Joi.number().integer().min(1).required(),
+            name: Joi.string().optional(),
+            price: Joi.number().optional()
+          })
+        ),
+
+        requestDate: Joi.string().optional().allow(null),
+        orderNote: Joi.string().optional().allow(''),
+        totalPrice: Joi.number().optional()
+      }).min(1)
+    }
+  },
+  handler: cartHandler.updateCartItemHandler
+}
 ];
