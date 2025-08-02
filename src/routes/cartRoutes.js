@@ -20,6 +20,7 @@ module.exports = [
 
     customMaterials: Joi.array().items(
       Joi.object({
+        materialId: Joi.string().required(), // ✅ Tambahkan ini
         name: Joi.string().optional(),
         price: Joi.number().optional(),
         quantity: Joi.number().integer().min(1).required()
