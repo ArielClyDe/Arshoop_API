@@ -2,11 +2,20 @@ const { db } = require('../services/firebaseService');
 
 // Tambahkan item ke cart
 const addToCartHandler = async (request, h) => {
-  const { userId, buketId, size, quantity, customMaterials = [] } = request.payload;
+  const {
+    userId,
+    buketId,
+    size,
+    quantity,
+    customMaterials = [],
+    requestDate = null,
+    orderNote = '',
+    totalPrice = 0
+  } = request.payload;
+
   const created_at = new Date().toISOString();
 
   try {
-    // Ambil buket untuk ambil service_price
     const buketDoc = await db.collection('buket').doc(buketId).get();
     if (!buketDoc.exists) {
       return h.response({
@@ -18,7 +27,6 @@ const addToCartHandler = async (request, h) => {
     const buketData = buketDoc.data();
     const servicePrice = buketData.service_price || 0;
 
-    // Simpan ke collection carts
     const docRef = await db.collection('carts').add({
       userId,
       buketId,
@@ -26,6 +34,9 @@ const addToCartHandler = async (request, h) => {
       quantity,
       customMaterials,
       servicePrice,
+      requestDate,       // Tambahan
+      orderNote,         // Tambahan
+      totalPrice,        // Tambahan (jika kamu sudah menghitung dari client)
       created_at,
     });
 
@@ -44,6 +55,7 @@ const addToCartHandler = async (request, h) => {
     }).code(500);
   }
 };
+
 
 // Hapus item dari cart
 const deleteCartItemHandler = async (request, h) => {
