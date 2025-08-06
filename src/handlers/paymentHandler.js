@@ -56,32 +56,47 @@ const chargePaymentHandler = async (request, h) => {
 
 // Tambahan untuk menerima notifikasi dari Midtrans
 const handleMidtransNotification = async (request, h) => {
-  const payload = request.payload;
-  console.log('📩 Midtrans Webhook Received:', payload);
+  try {
+    const notification = request.payload;
+    console.log('🔔 Midtrans Notification Diterima:', notification);
 
-  const { transaction_status, order_id, fraud_status } = payload;
+    const { transaction_status, order_id, fraud_status } = notification;
 
-  if (transaction_status === 'settlement') {
-    // Simpan ke database Firebase bahwa status order sudah dibayar
+    console.log(`📌 Status Transaksi: ${transaction_status}`);
+    console.log(`📦 Order ID: ${order_id}`);
+    console.log(`⚠️ Fraud Status: ${fraud_status}`);
+
     const db = require('../config/firebase');
-    await db.collection('orders').doc(order_id).update({
-      status: 'paid',
-      updatedAt: new Date().toISOString(),
-    });
+    const orderRef = db.collection('orders').doc(order_id);
 
-    console.log(`✅ Order ${order_id} marked as PAID`);
-  } else if (transaction_status === 'expire' || transaction_status === 'cancel') {
-    // Update status jadi gagal
-    const db = require('../config/firebase');
-    await db.collection('orders').doc(order_id).update({
-      status: 'failed',
-      updatedAt: new Date().toISOString(),
-    });
+    if (transaction_status === 'settlement') {
+      await orderRef.update({
+        status: 'paid',
+        updatedAt: new Date().toISOString(),
+      });
+      console.log(`✅ Order ${order_id} ditandai sebagai PAID`);
+    } else if (transaction_status === 'pending') {
+      await orderRef.update({
+        status: 'pending',
+        updatedAt: new Date().toISOString(),
+      });
+      console.log(`🕒 Order ${order_id} masih PENDING`);
+    } else if (transaction_status === 'deny' || transaction_status === 'cancel' || transaction_status === 'expire') {
+      await orderRef.update({
+        status: 'failed',
+        updatedAt: new Date().toISOString(),
+      });
+      console.log(`❌ Order ${order_id} ditandai sebagai FAILED`);
+    } else {
+      console.log(`ℹ️ Status lain: ${transaction_status}`);
+    }
 
-    console.log(`❌ Order ${order_id} marked as FAILED`);
+    return h.response({ message: 'Notifikasi diterima' }).code(200);
+  } catch (error) {
+    console.error('❌ Error di handleMidtransNotification:', error.message);
+    return h.response({ error: 'Internal Server Error' }).code(500);
   }
-
-  return h.response({ received: true }).code(200);
 };
+
 
 module.exports = { chargePaymentHandler, handleMidtransNotification };
