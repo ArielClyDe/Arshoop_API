@@ -8,7 +8,8 @@ const cartRoutes = require('./routes/cartRoutes');
 const materialRoutes = require('./routes/materialRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const testRoutes = require('./routes/testRoutes');
-const midtransRoutes = require('./routes/midtransRoutes'); // ✅ Tambahkan ini
+const paymentRoutes = require('./routes/paymentRoutes');
+
 
 const init = async () => {
   try {
@@ -41,7 +42,7 @@ const init = async () => {
       ...materialRoutes,
       ...orderRoutes,
       ...testRoutes,
-      ...midtransRoutes, // ✅ Panggil di sini
+      ...paymentRoutes, // ✅ rute midtrans & payment digabung di sini
     ]);
 
     await server.start();
