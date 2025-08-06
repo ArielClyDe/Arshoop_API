@@ -1,5 +1,6 @@
 const Joi = require('joi');
 const orderHandler = require('../handlers/orderHandler');
+const paymentHandler = require('../handlers/paymentHandler');
 
 module.exports = [
   {
@@ -12,6 +13,8 @@ module.exports = [
         payload: Joi.object({
           userId: Joi.string().required(),
           cartId: Joi.string().optional(),
+          address: Joi.string().required(),         // ✅ Tambahan: alamat pengiriman
+          shippingCost: Joi.number().required(),    // ✅ Tambahan: ongkir
         }),
       },
       handler: orderHandler.createOrderHandler,
@@ -34,7 +37,9 @@ module.exports = [
       description: 'Update status order (pending, processing, completed, cancelled)',
       validate: {
         payload: Joi.object({
-          status: Joi.string().valid('pending', 'processing', 'completed', 'cancelled').required(),
+          status: Joi.string()
+            .valid('pending', 'processing', 'completed', 'cancelled')
+            .required(),
         }),
       },
       handler: orderHandler.updateOrderStatusHandler,
@@ -47,6 +52,37 @@ module.exports = [
       tags: ['api'],
       description: 'Menampilkan detail satu order',
       handler: orderHandler.getOrderByIdHandler,
+    },
+  },
+
+  // 🔁 Midtrans: Buat transaksi pembayaran
+  {
+    method: 'POST',
+    path: '/payments/charge',
+    options: {
+      tags: ['api'],
+      description: 'Melakukan pembayaran melalui Midtrans (QRIS, VA, e-wallet)',
+      validate: {
+        payload: Joi.object({
+          orderId: Joi.string().required(),
+          userId: Joi.string().required(),
+          grossAmount: Joi.number().required(),
+          paymentType: Joi.string().valid('bank_transfer', 'qris', 'echannel', 'gopay').required(),
+          bank: Joi.string().optional(), // untuk VA
+        }),
+      },
+      handler: paymentHandler.chargePaymentHandler,
+    },
+  },
+
+  // 🛎️ Midtrans: Notification Handler (webhook)
+  {
+    method: 'POST',
+    path: '/payments/notification',
+    options: {
+      tags: ['api'],
+      description: 'Notifikasi status pembayaran dari Midtrans',
+      handler: paymentHandler.handleNotificationHandler,
     },
   },
 ];
