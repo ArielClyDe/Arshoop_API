@@ -10,16 +10,15 @@ module.exports = [
       tags: ['api'],
       description: 'Membuat order dari 1 cart atau seluruh cart milik user',
       validate: {
-  payload: Joi.object({
-    userId: Joi.string().required(),
-    carts: Joi.array().items(Joi.object()).required(), // array keranjang
-    alamat: Joi.string().required(),
-    ongkir: Joi.number().required(),
-    paymentMethod: Joi.string().valid('cod', 'transfer').required(),
-    totalPrice: Joi.number().required(),
-  }),
-},
-
+        payload: Joi.object({
+          userId: Joi.string().required(),
+          carts: Joi.array().items(Joi.object()).required(),
+          alamat: Joi.string().required(),
+          ongkir: Joi.number().required(),
+          paymentMethod: Joi.string().valid('cod', 'transfer').required(),
+          totalPrice: Joi.number().required(),
+        }),
+      },
       handler: orderHandler.createOrderHandler,
     },
   },
@@ -29,7 +28,7 @@ module.exports = [
     options: {
       tags: ['api'],
       description: 'Menampilkan semua order milik user',
-      handler: orderHandler.getOrdersByUserHandler,
+      handler: orderHandler.getAllOrdersHandler, // ✅ PERBAIKAN DI SINI
     },
   },
   {
@@ -54,7 +53,7 @@ module.exports = [
     options: {
       tags: ['api'],
       description: 'Menampilkan detail satu order',
-      handler: orderHandler.getOrderByIdHandler,
+      handler: orderHandler.getOrderDetailHandler, // ✅ PERBAIKAN DI SINI
     },
   },
 
