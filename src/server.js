@@ -53,6 +53,5 @@ const init = async () => {
   }
   
 };
-
 console.log('🌐 PORT dari Railway:', process.env.PORT);
 init();
