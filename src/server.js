@@ -41,7 +41,8 @@ const init = async () => {
       ...cartRoutes,
       ...materialRoutes,
       ...orderRoutes,
-      ...testRoutes
+      ...testRoutes,
+      ...midtransRoutes,
     ]);
 
     await server.start();
