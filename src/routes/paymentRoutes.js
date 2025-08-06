@@ -3,12 +3,12 @@ const { chargePaymentHandler, handleMidtransNotification } = require('../handler
 module.exports = [
   {
     method: 'POST',
-    path: '/midtrans/charge',
+    path: '/payment/charge',
     handler: chargePaymentHandler,
   },
   {
     method: 'POST',
-    path: '/midtrans/notification',
+    path: '/payment/notification',
     handler: handleMidtransNotification,
   },
 ];
