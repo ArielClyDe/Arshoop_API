@@ -66,7 +66,7 @@ const handleMidtransNotification = async (request, h) => {
     console.log(`📦 Order ID: ${order_id}`);
     console.log(`⚠️ Fraud Status: ${fraud_status}`);
 
-    const db = require('../config/firebase');
+    const { db } = require('../services/firebaseService');
     const orderRef = db.collection('orders').doc(order_id);
 
     if (transaction_status === 'settlement') {
