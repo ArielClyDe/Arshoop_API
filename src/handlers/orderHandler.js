@@ -1,5 +1,5 @@
-import { v4 as uuidv4 } from 'uuid';
 import { db } from '../config/firebase.js';
+const { v4: uuidv4 } = require('uuid');
 
 const createOrderHandler = async (request, h) => {
   try {
@@ -8,7 +8,7 @@ const createOrderHandler = async (request, h) => {
       carts,
       alamat,
       ongkir,
-      paymentMethod, // 'cod' atau 'transfer'
+      paymentMethod,
       totalPrice,
     } = request.payload;
 
@@ -17,6 +17,7 @@ const createOrderHandler = async (request, h) => {
     }
 
     const orderId = uuidv4();
+
     const orderData = {
       orderId,
       userId,
@@ -37,7 +38,11 @@ const createOrderHandler = async (request, h) => {
     cartSnapshot.forEach(doc => batch.delete(doc.ref));
     await batch.commit();
 
-    return h.response({ status: 'success', message: 'Order berhasil dibuat', data: { orderId } }).code(201);
+    return h.response({
+      status: 'success',
+      message: 'Order berhasil dibuat',
+      data: { orderId },
+    }).code(201);
   } catch (error) {
     console.error('Gagal membuat order:', error);
     return h.response({ status: 'error', message: 'Gagal membuat order' }).code(500);

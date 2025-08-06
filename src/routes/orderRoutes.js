@@ -10,13 +10,16 @@ module.exports = [
       tags: ['api'],
       description: 'Membuat order dari 1 cart atau seluruh cart milik user',
       validate: {
-        payload: Joi.object({
-          userId: Joi.string().required(),
-          cartId: Joi.string().optional(),
-          address: Joi.string().required(),         // ✅ Tambahan: alamat pengiriman
-          shippingCost: Joi.number().required(),    // ✅ Tambahan: ongkir
-        }),
-      },
+  payload: Joi.object({
+    userId: Joi.string().required(),
+    carts: Joi.array().items(Joi.object()).required(), // array keranjang
+    alamat: Joi.string().required(),
+    ongkir: Joi.number().required(),
+    paymentMethod: Joi.string().valid('cod', 'transfer').required(),
+    totalPrice: Joi.number().required(),
+  }),
+},
+
       handler: orderHandler.createOrderHandler,
     },
   },
