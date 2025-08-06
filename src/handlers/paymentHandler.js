@@ -62,41 +62,47 @@ const handleMidtransNotification = async (request, h) => {
 
     const { transaction_status, order_id, fraud_status } = notification;
 
-    console.log(`📌 Status Transaksi: ${transaction_status}`);
-    console.log(`📦 Order ID: ${order_id}`);
-    console.log(`⚠️ Fraud Status: ${fraud_status}`);
-
     const { db } = require('../services/firebaseService');
     const orderRef = db.collection('orders').doc(order_id);
+    const orderSnap = await orderRef.get();
 
-    if (transaction_status === 'settlement') {
-      await orderRef.update({
-        status: 'paid',
-        updatedAt: new Date().toISOString(),
-      });
-      console.log(`✅ Order ${order_id} ditandai sebagai PAID`);
-    } else if (transaction_status === 'pending') {
-      await orderRef.update({
-        status: 'pending',
-        updatedAt: new Date().toISOString(),
-      });
-      console.log(`🕒 Order ${order_id} masih PENDING`);
-    } else if (transaction_status === 'deny' || transaction_status === 'cancel' || transaction_status === 'expire') {
-      await orderRef.update({
-        status: 'failed',
-        updatedAt: new Date().toISOString(),
-      });
-      console.log(`❌ Order ${order_id} ditandai sebagai FAILED`);
-    } else {
-      console.log(`ℹ️ Status lain: ${transaction_status}`);
+    if (!orderSnap.exists) {
+      console.warn(`❗ Order dengan ID ${order_id} tidak ditemukan`);
+      return h.response({ message: 'Order tidak ditemukan' }).code(404);
     }
 
-    return h.response({ message: 'Notifikasi diterima' }).code(200);
+    // Konversi status midtrans → status aplikasi
+    let newStatus = '';
+    if (transaction_status === 'settlement') {
+      newStatus = 'dibayar';
+    } else if (transaction_status === 'pending') {
+      newStatus = 'menunggu pembayaran';
+    } else if (transaction_status === 'expire') {
+      newStatus = 'expired';
+    } else if (transaction_status === 'cancel') {
+      newStatus = 'dibatalkan';
+    } else if (transaction_status === 'deny') {
+      newStatus = 'gagal';
+    } else {
+      newStatus = transaction_status; // fallback
+    }
+
+    // Update order
+    await orderRef.update({
+      status: newStatus,
+      midtrans_status: transaction_status,
+      fraud_status,
+      updatedAt: new Date().toISOString(),
+    });
+
+    console.log(`✅ Order ${order_id} status diupdate ke: ${newStatus}`);
+    return h.response({ message: 'Notifikasi diterima dan status diperbarui' }).code(200);
   } catch (error) {
     console.error('❌ Error di handleMidtransNotification:', error.message);
     return h.response({ error: 'Internal Server Error' }).code(500);
   }
 };
+
 
 
 module.exports = { chargePaymentHandler, handleMidtransNotification };
