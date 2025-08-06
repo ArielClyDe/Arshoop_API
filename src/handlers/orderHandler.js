@@ -48,12 +48,10 @@ const createOrderHandler = async (request, h) => {
     console.error('Gagal membuat order:', error);
     return h.response({ status: 'error', message: 'Gagal membuat order' }).code(500);
   }
-  
 };
 
 module.exports = {
   createOrderHandler,
-  getAllOrdersHandler,
   getOrderDetailHandler,
   updateOrderStatusHandler,
 };
