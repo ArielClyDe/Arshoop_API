@@ -1,3 +1,5 @@
+// src/routes/paymentRoutes.js
+
 const { chargePaymentHandler, handleMidtransNotification } = require('../handlers/paymentHandler');
 
 module.exports = [
@@ -12,4 +14,3 @@ module.exports = [
     handler: handleMidtransNotification,
   },
 ];
-
