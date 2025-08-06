@@ -46,9 +46,11 @@ const init = async () => {
 
     await server.start();
     console.log(`✅ Server running at: ${server.info.uri}`);
+    console.log('🔐 Midtrans Key:', process.env.MIDTRANS_SERVER_KEY);
   } catch (err) {
     console.error('❌ Error saat inisialisasi server:', err);
   }
+  
 };
 
 console.log('🌐 PORT dari Railway:', process.env.PORT);
