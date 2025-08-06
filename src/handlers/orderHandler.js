@@ -1,4 +1,4 @@
-const { db } = require('../service/firebaseService');
+const { db } = require('../services/firebaseService');
 const { v4: uuidv4 } = require('uuid');
 
 
