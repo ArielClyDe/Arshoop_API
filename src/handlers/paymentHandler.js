@@ -1,5 +1,5 @@
 // src/handlers/paymentHandler.js
-import midtransClient from 'midtrans-client';
+const midtransClient = require('midtrans-client');
 
 const snap = new midtransClient.Snap({
   isProduction: false,
@@ -54,5 +54,5 @@ const chargePaymentHandler = async (request, h) => {
   }
 };
 
-export { chargePaymentHandler };
+module.exports = { chargePaymentHandler };
 

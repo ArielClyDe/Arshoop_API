@@ -1,5 +1,5 @@
 // src/routes/paymentRoutes.js
-import { chargePaymentHandler } from '../handlers/paymentHandler.js';
+const { chargePaymentHandler } = require('../handlers/paymentHandler');
 
 const paymentRoutes = [
   {
@@ -9,4 +9,4 @@ const paymentRoutes = [
   },
 ];
 
-export default paymentRoutes;
+module.exports = paymentRoutes;
