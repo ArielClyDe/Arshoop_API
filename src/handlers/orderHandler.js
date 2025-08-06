@@ -1,101 +1,90 @@
-const { db } = require('../services/firebaseService');
-const { v4: uuidv4 } = require('uuid');
+const Joi = require('joi');
+const orderHandler = require('../handlers/orderHandler');
+const paymentHandler = require('../handlers/paymentHandler');
 
+module.exports = [
+  {
+    method: 'POST',
+    path: '/orders',
+    options: {
+      tags: ['api'],
+      description: 'Membuat order dari 1 cart atau seluruh cart milik user',
+      validate: {
+        payload: Joi.object({
+          userId: Joi.string().required(),
+          carts: Joi.array().items(Joi.object()).required(),
+          alamat: Joi.string().required(),
+          ongkir: Joi.number().required(),
+          paymentMethod: Joi.string().valid('cod', 'transfer').required(),
+          totalPrice: Joi.number().required(),
+        }),
+      },
+      handler: orderHandler.createOrderHandler,
+    },
+  },
+  {
+    method: 'GET',
+    path: '/orders/{userId}',
+    options: {
+      tags: ['api'],
+      description: 'Menampilkan semua order milik user',
+      handler: orderHandler.getAllOrdersHandler, // ✅ PERBAIKAN DI SINI
+    },
+  },
+  {
+    method: 'PATCH',
+    path: '/orders/{orderId}/status',
+    options: {
+      tags: ['api'],
+      description: 'Update status order (pending, processing, completed, cancelled)',
+      validate: {
+        payload: Joi.object({
+          status: Joi.string()
+            .valid('pending', 'processing', 'completed', 'cancelled')
+            .required(),
+        }),
+      },
+      handler: orderHandler.updateOrderStatusHandler,
+    },
+  },
+  {
+    method: 'GET',
+    path: '/orders/detail/{orderId}',
+    options: {
+      tags: ['api'],
+      description: 'Menampilkan detail satu order',
+      handler: orderHandler.getOrderDetailHandler, // ✅ PERBAIKAN DI SINI
+    },
+  },
 
-const createOrderHandler = async (request, h) => {
-  try {
-    const {
-      userId,
-      carts,
-      alamat,
-      ongkir,
-      paymentMethod,
-      totalPrice,
-    } = request.payload;
+  // 🔁 Midtrans: Buat transaksi pembayaran
+  {
+    method: 'POST',
+    path: '/payments/charge',
+    options: {
+      tags: ['api'],
+      description: 'Melakukan pembayaran melalui Midtrans (QRIS, VA, e-wallet)',
+      validate: {
+        payload: Joi.object({
+          orderId: Joi.string().required(),
+          userId: Joi.string().required(),
+          grossAmount: Joi.number().required(),
+          paymentType: Joi.string().valid('bank_transfer', 'qris', 'echannel', 'gopay').required(),
+          bank: Joi.string().optional(), // untuk VA
+        }),
+      },
+      handler: paymentHandler.chargePaymentHandler,
+    },
+  },
 
-    if (!userId || !carts || carts.length === 0 || !alamat || !paymentMethod || !totalPrice) {
-      return h.response({ status: 'fail', message: 'Data tidak lengkap' }).code(400);
-    }
-
-    const orderId = uuidv4();
-
-    const orderData = {
-      orderId,
-      userId,
-      alamat,
-      ongkir,
-      paymentMethod,
-      totalPrice,
-      carts,
-      status: paymentMethod === 'cod' ? 'pending' : 'waiting_payment',
-      createdAt: new Date().toISOString(),
-    };
-
-    await db.collection('orders').doc(orderId).set(orderData);
-
-    // Hapus semua cart user
-    const cartSnapshot = await db.collection('carts').where('userId', '==', userId).get();
-    const batch = db.batch();
-    cartSnapshot.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
-
-    return h.response({
-      status: 'success',
-      message: 'Order berhasil dibuat',
-      data: { orderId },
-    }).code(201);
-  } catch (error) {
-    console.error('Gagal membuat order:', error);
-    return h.response({ status: 'error', message: 'Gagal membuat order' }).code(500);
-  }
-};
-
-// GET /orders
-const getAllOrdersHandler = async (request, h) => {
-  const { userId } = request.query;
-  try {
-    const snapshot = await db.collection('orders').where('userId', '==', userId).get();
-    const orders = snapshot.docs.map((doc) => ({ orderId: doc.id, ...doc.data() }));
-    return h.response({ status: 'success', data: orders }).code(200);
-  } catch (error) {
-    console.error('Error fetching orders:', error);
-    return h.response({ status: 'fail', message: 'Gagal mengambil data order' }).code(500);
-  }
-};
-
-// GET /orders/{orderId}
-const getOrderDetailHandler = async (request, h) => {
-  const { orderId } = request.params;
-  try {
-    const orderDoc = await db.collection('orders').doc(orderId).get();
-    if (!orderDoc.exists) {
-      return h.response({ status: 'fail', message: 'Order tidak ditemukan' }).code(404);
-    }
-    const orderData = orderDoc.data();
-    return h.response({ status: 'success', data: { orderId, ...orderData } }).code(200);
-  } catch (error) {
-    return h.response({ status: 'error', message: 'Gagal mengambil detail order' }).code(500);
-  }
-};
-
-// PUT /orders/{orderId}/status
-const updateOrderStatusHandler = async (request, h) => {
-  const { orderId } = request.params;
-  const { status } = request.payload;
-
-  try {
-    await db.collection('orders').doc(orderId).update({ status });
-    return h.response({ status: 'success', message: 'Status berhasil diupdate' }).code(200);
-  } catch (error) {
-    return h.response({ status: 'error', message: 'Gagal update status' }).code(500);
-  }
-};
-
-module.exports = {
-  createOrderHandler,
-  getAllOrdersHandler,
-  getOrderDetailHandler,
-  updateOrderStatusHandler,
-};
-
-
+  // 🛎️ Midtrans: Notification Handler (webhook)
+  {
+    method: 'POST',
+    path: '/payments/notification',
+    options: {
+      tags: ['api'],
+      description: 'Notifikasi status pembayaran dari Midtrans',
+      handler: paymentHandler.handleNotificationHandler,
+    },
+  },
+];
