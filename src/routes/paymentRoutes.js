@@ -1,12 +1,17 @@
-// src/routes/paymentRoutes.js
-const { chargePaymentHandler } = require('../handlers/paymentHandler');
+const { chargePaymentHandler, handleMidtransNotification } = require('../handlers/paymentHandler');
 
-const paymentRoutes = [
+module.exports = [
   {
     method: 'POST',
-    path: '/payment/charge',
+    path: '/midtrans/charge',
     handler: chargePaymentHandler,
   },
+  {
+    method: 'POST',
+    path: '/midtrans/notification',
+    handler: handleMidtransNotification,
+  },
 ];
+
 
 module.exports = paymentRoutes;

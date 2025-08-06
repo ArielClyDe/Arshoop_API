@@ -54,5 +54,34 @@ const chargePaymentHandler = async (request, h) => {
   }
 };
 
-module.exports = { chargePaymentHandler };
+// Tambahan untuk menerima notifikasi dari Midtrans
+const handleMidtransNotification = async (request, h) => {
+  const payload = request.payload;
+  console.log('📩 Midtrans Webhook Received:', payload);
 
+  const { transaction_status, order_id, fraud_status } = payload;
+
+  if (transaction_status === 'settlement') {
+    // Simpan ke database Firebase bahwa status order sudah dibayar
+    const db = require('../config/firebase');
+    await db.collection('orders').doc(order_id).update({
+      status: 'paid',
+      updatedAt: new Date().toISOString(),
+    });
+
+    console.log(`✅ Order ${order_id} marked as PAID`);
+  } else if (transaction_status === 'expire' || transaction_status === 'cancel') {
+    // Update status jadi gagal
+    const db = require('../config/firebase');
+    await db.collection('orders').doc(order_id).update({
+      status: 'failed',
+      updatedAt: new Date().toISOString(),
+    });
+
+    console.log(`❌ Order ${order_id} marked as FAILED`);
+  }
+
+  return h.response({ received: true }).code(200);
+};
+
+module.exports = { chargePaymentHandler, handleMidtransNotification };
