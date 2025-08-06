@@ -1,14 +1,12 @@
-import paymentHandler from '../handlers/paymentHandler.js';
+// src/routes/paymentRoutes.js
+import { chargePaymentHandler } from '../handlers/paymentHandler.js';
 
 const paymentRoutes = [
   {
     method: 'POST',
-    path: '/payments/charge',
-    handler: paymentHandler.chargePaymentHandler,
+    path: '/payment/charge',
+    handler: chargePaymentHandler,
   },
 ];
 
-// ✅ BENAR
-module.exports = {
-  chargePaymentHandler,
-};
+export default paymentRoutes;

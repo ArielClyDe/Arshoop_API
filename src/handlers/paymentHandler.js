@@ -1,3 +1,4 @@
+// src/handlers/paymentHandler.js
 import midtransClient from 'midtrans-client';
 
 const snap = new midtransClient.Snap({
@@ -7,10 +8,10 @@ const snap = new midtransClient.Snap({
 });
 
 const chargePaymentHandler = async (request, h) => {
-  const { orderId, grossAmount, paymentType, bank, userId } = request.payload;
-
   try {
-    let payload = {
+    const { orderId, grossAmount, paymentType, bank, userId } = request.payload;
+
+    const parameter = {
       transaction_details: {
         order_id: orderId,
         gross_amount: grossAmount,
@@ -20,35 +21,38 @@ const chargePaymentHandler = async (request, h) => {
       },
     };
 
+    // Tambahkan logika berdasarkan jenis pembayaran
     if (paymentType === 'bank_transfer') {
-      payload.payment_type = 'bank_transfer';
-      payload.bank_transfer = {
-        bank: bank,
+      parameter.payment_type = 'bank_transfer';
+      parameter.bank_transfer = {
+        bank, // contoh: bca, bni, bri
       };
-    } else if (paymentType === 'echannel') {
-      payload.payment_type = 'echannel';
-      payload.echannel = {
-        bill_info1: 'Payment For',
-        bill_info2: 'Arshoop',
-      };
+    } else if (paymentType === 'qris') {
+      parameter.payment_type = 'qris';
+    } else if (paymentType === 'gopay') {
+      parameter.payment_type = 'gopay';
     } else {
-      payload.payment_type = paymentType;
+      return h.response({
+        status: 'fail',
+        message: 'Unsupported payment type',
+      }).code(400);
     }
 
-    const chargeResponse = await snap.createTransaction(payload);
+    const transaction = await snap.createTransaction(parameter);
+
     return h.response({
       status: 'success',
-      data: chargeResponse,
-    }).code(201);
-  } catch (err) {
-    console.error('Payment error:', err);
+      message: 'Transaction created',
+      data: transaction,
+    }).code(200);
+  } catch (error) {
+    console.error('Midtrans error:', error.message);
     return h.response({
-      status: 'fail',
-      message: err.message,
+      status: 'error',
+      message: 'Failed to create transaction',
     }).code(500);
   }
 };
 
-module.exports = {
-  handleCharge: chargePaymentHandler,
-};
+export { chargePaymentHandler };
+
