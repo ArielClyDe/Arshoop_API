@@ -8,6 +8,7 @@ const cartRoutes = require('./routes/cartRoutes');
 const materialRoutes = require('./routes/materialRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const testRoutes = require('./routes/testRoutes');
+const midtransRoutes = require('./routes/midtransRoutes'); // ✅ Tambahkan ini
 
 const init = async () => {
   try {
@@ -23,7 +24,6 @@ const init = async () => {
       },
     });
 
-    // Route default untuk root path
     server.route({
       method: 'GET',
       path: '/',
@@ -34,7 +34,6 @@ const init = async () => {
       },
     });
 
-    // Gabungkan semua routes dari file terpisah
     server.route([
       ...buketRoutes,
       ...authRoutes,
@@ -42,7 +41,7 @@ const init = async () => {
       ...materialRoutes,
       ...orderRoutes,
       ...testRoutes,
-      ...midtransRoutes,
+      ...midtransRoutes, // ✅ Panggil di sini
     ]);
 
     await server.start();
@@ -52,7 +51,5 @@ const init = async () => {
   }
 };
 
-// Jalankan server
 console.log('🌐 PORT dari Railway:', process.env.PORT);
-
 init();
