@@ -8,4 +8,7 @@ const paymentRoutes = [
   },
 ];
 
-export default paymentRoutes;
+// ✅ BENAR
+module.exports = {
+  chargePaymentHandler,
+};
