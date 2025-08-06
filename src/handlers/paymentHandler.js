@@ -1,44 +1,54 @@
-const { chargeMidtrans } = require('../services/midtransService');
-const { db } = require('../config/firebase');
+import midtransClient from 'midtrans-client';
 
-const createPaymentHandler = async (request, h) => {
+const snap = new midtransClient.Snap({
+  isProduction: false,
+  serverKey: process.env.MIDTRANS_SERVER_KEY,
+  clientKey: process.env.MIDTRANS_CLIENT_KEY,
+});
+
+const chargePaymentHandler = async (request, h) => {
+  const { orderId, grossAmount, paymentType, bank, userId } = request.payload;
+
   try {
-    const { orderId, grossAmount, paymentType, bank, userId } = request.payload;
+    let payload = {
+      transaction_details: {
+        order_id: orderId,
+        gross_amount: grossAmount,
+      },
+      customer_details: {
+        user_id: userId,
+      },
+    };
 
-    // Proses ke Midtrans
-    const midtransResult = await chargeMidtrans({
-      orderId,
-      grossAmount,
-      paymentType,
-      bank,
-    });
+    if (paymentType === 'bank_transfer') {
+      payload.payment_type = 'bank_transfer';
+      payload.bank_transfer = {
+        bank: bank,
+      };
+    } else if (paymentType === 'echannel') {
+      payload.payment_type = 'echannel';
+      payload.echannel = {
+        bill_info1: 'Payment For',
+        bill_info2: 'Arshoop',
+      };
+    } else {
+      payload.payment_type = paymentType;
+    }
 
-    // Simpan ke Firestore
-    const paymentRef = db.collection('payments').doc(orderId);
-    await paymentRef.set({
-      orderId,
-      userId,
-      paymentType,
-      bank: bank || null,
-      grossAmount,
-      midtrans: midtransResult,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    });
-
+    const chargeResponse = await snap.createTransaction(payload);
     return h.response({
       status: 'success',
-      data: midtransResult,
+      data: chargeResponse,
     }).code(201);
   } catch (err) {
-    console.error('Payment error:', err.response?.data || err.message);
+    console.error('Payment error:', err);
     return h.response({
       status: 'fail',
-      message: 'Gagal memproses pembayaran',
+      message: err.message,
     }).code(500);
   }
 };
 
-module.exports = {
-  createPaymentHandler,
+export default {
+  chargePaymentHandler,
 };

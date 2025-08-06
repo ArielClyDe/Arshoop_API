@@ -1,9 +1,11 @@
-const { createPaymentHandler } = require('../handlers/paymentHandler');
+import paymentHandler from '../handlers/paymentHandler.js';
 
-module.exports = [
+const paymentRoutes = [
   {
     method: 'POST',
-    path: '/payments',
-    handler: createPaymentHandler,
+    path: '/payments/charge',
+    handler: paymentHandler.chargePaymentHandler,
   },
 ];
+
+export default paymentRoutes;
