@@ -84,7 +84,7 @@ module.exports = [
     options: {
       tags: ['api'],
       description: 'Notifikasi status pembayaran dari Midtrans',
-      handler: paymentHandler.handleNotificationHandler,
+      handler: paymentHandler.handleMidtransNotification,
     },
   },
 ];
