@@ -49,6 +49,6 @@ const chargePaymentHandler = async (request, h) => {
   }
 };
 
-export default {
-  chargePaymentHandler,
+module.exports = {
+  handleCharge: chargePaymentHandler,
 };
