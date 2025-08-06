@@ -50,5 +50,9 @@ const createOrderHandler = async (request, h) => {
   }
 };
 
-export { createOrderHandler };
+module.exports = {
+  createOrderHandler,
+  // tambahkan handler lainnya jika ada
+};
+
 
