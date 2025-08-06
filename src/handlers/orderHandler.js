@@ -1,5 +1,6 @@
-import { db } from '../config/firebase.js';
+const { db } = require('../config/firebase');
 const { v4: uuidv4 } = require('uuid');
+
 
 const createOrderHandler = async (request, h) => {
   try {
