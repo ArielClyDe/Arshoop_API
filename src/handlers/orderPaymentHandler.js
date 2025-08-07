@@ -2,7 +2,16 @@
 const midtransClient = require('midtrans-client');
 const { db } = require('../services/firebaseService');
 const { v4: uuidv4 } = require('uuid');
-const logger = require('../utils/logger'); // Asumsikan Anda memiliki logger custom
+const logger = {
+  info: (...args) => console.log('[INFO]', ...args),
+  error: (...args) => console.error('[ERROR]', ...args),
+  warn: (...args) => console.warn('[WARN]', ...args),
+  debug: (...args) => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[DEBUG]', ...args);
+    }
+  }
+};
 
 // Inisialisasi Midtrans Snap dengan error handling
 let snap;
