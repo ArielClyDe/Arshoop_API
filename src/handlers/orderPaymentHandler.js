@@ -190,10 +190,53 @@ const createOrderHandler = async (request, h) => {
       throw error;
     }
 
-    // 6. Calculate total price
-    const subtotal = carts.reduce((sum, cart) => sum + (Number(cart.totalPrice) || 0, 0));
-    const shippingCost = deliveryMethod === 'delivery' ? Math.round(Number(ongkir) || 0) : 0;
+    // 6. Calculate total price with enhanced debugging
+    const amountDebug = {
+      cartCalculations: carts.map((cart, index) => ({
+        cartIndex: index,
+        buketId: cart.buketId,
+        rawTotalPrice: cart.totalPrice,
+        parsedTotalPrice: Number(cart.totalPrice),
+        isNumberValid: !isNaN(Number(cart.totalPrice)),
+        basePrice: cart.basePrice,
+        servicePrice: cart.servicePrice
+      })),
+      subtotal: {
+        calculation: 'sum of all cart.totalPrice',
+        value: carts.reduce((sum, cart) => sum + (Number(cart.totalPrice) || 0), 0)
+      },
+      shipping: {
+        rawOngkir: ongkir,
+        parsedOngkir: Number(ongkir),
+        finalShippingCost: deliveryMethod === 'delivery' ? Math.round(Number(ongkir) || 0) : 0
+      }
+    };
+
+    const subtotal = amountDebug.subtotal.value;
+    const shippingCost = amountDebug.shipping.finalShippingCost;
     const totalPrice = Math.round(subtotal + shippingCost);
+
+    // Add final amount validation
+    amountDebug.finalAmount = {
+      subtotal,
+      shippingCost,
+      totalPrice,
+      isInteger: Number.isInteger(totalPrice),
+      isSafeNumber: Number.isSafeInteger(totalPrice),
+      midtransReadyAmount: parseInt(totalPrice, 10)
+    };
+
+    logger.debug(`[${requestId}] Amount Calculation Debug:`, JSON.stringify(amountDebug, null, 2));
+
+    // Validate amount before proceeding
+    if (isNaN(totalPrice) || totalPrice <= 0) {
+      throw new Error(`Invalid totalPrice: ${totalPrice}. Must be positive number`);
+    }
+
+    const midtransAmount = parseInt(totalPrice, 10);
+    if (isNaN(midtransAmount)) {
+      throw new Error(`Failed to parse amount for Midtrans: ${totalPrice}`);
+    }
 
     // 7. Create order data
     const orderId = `ORDER-${uuidv4()}`;
@@ -213,7 +256,13 @@ const createOrderHandler = async (request, h) => {
       updatedAt: new Date().toISOString(),
     };
 
-    logger.debug(`[${requestId}] Order data prepared:`, JSON.stringify(orderData, null, 2));
+    logger.debug(`[${requestId}] Order data prepared:`, JSON.stringify({
+      ...orderData,
+      carts: orderData.carts.map(c => ({
+        ...c,
+        customMaterials: c.customMaterials ? '[...]' : 'none'
+      }))
+    }, null, 2));
 
     // 8. Save to Firestore
     await db.collection('orders').doc(orderId).set(orderData);
@@ -222,10 +271,11 @@ const createOrderHandler = async (request, h) => {
     // 9. Process payment for transfer method
     if (paymentMethod === 'transfer') {
       try {
+        // Enhanced Midtrans parameter preparation
         const parameter = {
           transaction_details: {
             order_id: orderId,
-            gross_amount: totalPrice,
+            gross_amount: midtransAmount, // Using validated amount
           },
           customer_details: {
             first_name: `Customer-${userId.substring(0, 8)}`,
@@ -236,11 +286,24 @@ const createOrderHandler = async (request, h) => {
           bank_transfer: { bank: 'bca' },
         };
 
-        logger.debug(`[${requestId}] Midtrans transaction parameter:`, JSON.stringify(parameter, null, 2));
-        
+        logger.debug(`[${requestId}] Midtrans Request Payload:`, {
+          ...parameter,
+          transaction_details: {
+            ...parameter.transaction_details,
+            amount_type: typeof parameter.transaction_details.gross_amount,
+            amount_value: parameter.transaction_details.gross_amount
+          }
+        });
+
         const transaction = await snap.createTransaction(parameter);
-        logger.debug(`[${requestId}] Midtrans response:`, JSON.stringify(transaction, null, 2));
         
+        logger.debug(`[${requestId}] Midtrans Response:`, {
+          transactionId: transaction?.transaction_id,
+          statusCode: transaction?.status_code,
+          paymentUrl: transaction?.redirect_url ? '[...]' : null,
+          fullResponse: transaction
+        });
+
         if (!transaction?.transaction_id || !transaction?.redirect_url) {
           throw Object.assign(new Error('Invalid Midtrans response'), {
             type: 'MIDTRANS_ERROR',
@@ -253,6 +316,8 @@ const createOrderHandler = async (request, h) => {
             transactionId: transaction.transaction_id,
             paymentUrl: transaction.redirect_url,
             status: 'pending',
+            amountSent: midtransAmount,
+            amountVerified: totalPrice
           },
           updatedAt: new Date().toISOString(),
         });
@@ -264,33 +329,48 @@ const createOrderHandler = async (request, h) => {
             orderId,
             paymentUrl: transaction.redirect_url,
             transactionId: transaction.transaction_id,
+            amount: midtransAmount
           },
         }).code(201);
       } catch (paymentError) {
-        const normalizedError = {
-          message: paymentError.message,
-          stack: paymentError.stack,
-          type: paymentError.type || 'PAYMENT_ERROR',
-          code: paymentError.code || paymentError.httpStatusCode || 'UNKNOWN',
-          response: paymentError.ApiResponse || paymentError.response
+        // Enhanced error diagnostics
+        const errorAnalysis = {
+          timestamp: new Date().toISOString(),
+          amountDebug,
+          midtransAmount,
+          errorDetails: {
+            message: paymentError.message,
+            stack: paymentError.stack,
+            apiResponse: paymentError.ApiResponse,
+            httpStatus: paymentError.httpStatusCode
+          },
+          environment: {
+            nodeEnv: process.env.NODE_ENV,
+            midtransMode: snap.apiConfig.isProduction ? 'production' : 'sandbox'
+          }
         };
 
-        logger.error(`[${requestId}] Payment processing failed`, normalizedError);
+        logger.error(`[${requestId}] Payment Failure Analysis:`, JSON.stringify(errorAnalysis, null, 2));
 
         await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
           status: 'payment_failed',
           midtrans_status: 'error',
-          paymentError: normalizedError.message.substring(0, 200),
+          paymentError: {
+            message: paymentError.message.substring(0, 200),
+            code: paymentError.httpStatusCode,
+            amountAttempted: midtransAmount
+          },
           updatedAt: new Date().toISOString(),
         });
 
         return h.response({
           status: 'error',
           message: 'Pembayaran gagal diproses',
-          ...(process.env.NODE_ENV === 'development' && {
-            error: normalizedError.message,
-            type: normalizedError.type
-          })
+          errorId: requestId,
+          debug: process.env.NODE_ENV === 'development' ? {
+            amountSent: midtransAmount,
+            error: paymentError.message
+          } : undefined
         }).code(502);
       }
     }
@@ -307,30 +387,34 @@ const createOrderHandler = async (request, h) => {
       },
     }).code(201);
   } catch (error) {
-    const normalizedError = {
-      message: error.message || 'Unknown error occurred during order creation',
-      stack: error.stack || new Error().stack,
-      type: error.type || 'UNKNOWN_ERROR',
-      code: error.code || 'UNKNOWN',
-      details: error.details || error.invalidItems || error.missingFields || null
+    // Comprehensive error logging
+    const errorReport = {
+      timestamp: new Date().toISOString(),
+      requestId,
+      error: {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        type: error.type,
+        code: error.code
+      },
+      system: {
+        nodeVersion: process.version,
+        memoryUsage: process.memoryUsage()
+      }
     };
 
-    logger.error(`[${requestId}] Order creation failed`, {
-      error: normalizedError,
-      payloadSummary: request.payload ? {
-        userId: request.payload.userId,
-        itemCount: request.payload.carts?.length,
-        paymentMethod: request.payload.paymentMethod
-      } : null
-    });
+    logger.error(`[${requestId}] Order Creation Failure:`, JSON.stringify(errorReport, null, 2));
 
     return h.response({
       status: 'error',
       message: 'Gagal membuat order',
       errorId: requestId,
       ...(process.env.NODE_ENV === 'development' && {
-        error: normalizedError.message,
-        type: normalizedError.type
+        debug: {
+          error: error.message,
+          type: error.type
+        }
       })
     }).code(500);
   }
