@@ -11,11 +11,10 @@ const snap = new midtransClient.Snap({
 });
 
 // CREATE ORDER
-// CREATE ORDER (Hapi.js)
 const createOrderHandler = async (request, h) => {
   try {
-    const { totalPrice, orderItems } = request.payload; // Hapi pakai request.payload
-    const { userId } = request.auth.credentials; // atau dari token JWT
+    const { totalPrice, orderItems } = request.payload;
+    const { userId } = request.auth.credentials;
 
     if (!orderItems || orderItems.length === 0) {
       return h.response({ message: 'Order items are required' }).code(400);
@@ -62,6 +61,33 @@ const createOrderHandler = async (request, h) => {
   }
 };
 
+// GET ALL ORDERS
+const getAllOrdersHandler = async (request, h) => {
+  try {
+    const snapshot = await db.collection('orders').get();
+    if (snapshot.empty) {
+      return h.response({ status: 'success', data: [], message: 'Tidak ada order' }).code(200);
+    }
+
+    const orders = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        orderId: doc.id,
+        ...data,
+        createdAt: data.createdAt ? new Date(data.createdAt).toLocaleString('id-ID') : null,
+        updatedAt: data.updatedAt ? new Date(data.updatedAt).toLocaleString('id-ID') : null,
+        totalItems: Array.isArray(data.carts)
+          ? data.carts.reduce((sum, item) => sum + (item.quantity || 0), 0)
+          : 0
+      };
+    });
+
+    return h.response({ status: 'success', data: orders }).code(200);
+  } catch (error) {
+    console.error('Error fetching all orders:', error);
+    return h.response({ status: 'error', message: 'Gagal mengambil semua order' }).code(500);
+  }
+};
 
 // GET ORDER DETAIL
 const getOrderDetailHandler = async (request, h) => {
