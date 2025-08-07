@@ -1,6 +1,5 @@
 const Joi = require('joi');
 const orderHandler = require('../handlers/orderHandler');
-const paymentHandler = require('../handlers/paymentHandler');
 
 module.exports = [
   {
@@ -54,26 +53,6 @@ module.exports = [
       tags: ['api'],
       description: 'Menampilkan detail satu order',
       handler: orderHandler.getOrderDetailHandler, // ✅ PERBAIKAN DI SINI
-    },
-  },
-
-  // 🔁 Midtrans: Buat transaksi pembayaran
-  {
-    method: 'POST',
-    path: '/payments/charge',
-    options: {
-      tags: ['api'],
-      description: 'Melakukan pembayaran melalui Midtrans (QRIS, VA, e-wallet)',
-      validate: {
-        payload: Joi.object({
-          orderId: Joi.string().required(),
-          userId: Joi.string().required(),
-          grossAmount: Joi.number().required(),
-          paymentType: Joi.string().valid('bank_transfer', 'qris', 'echannel', 'gopay').required(),
-          bank: Joi.string().optional(), // untuk VA
-        }),
-      },
-      handler: paymentHandler.chargePaymentHandler,
     },
   },
 ];
