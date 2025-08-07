@@ -72,7 +72,67 @@ const safeFirestoreUpdate = async (docRef, data) => {
   await docRef.update(cleanData);
 };
 
-// Modified createOrderHandler with enhanced Midtrans error handling
+// Validation functions
+const validateOrderInput = (payload) => {
+  const errors = [];
+  if (!payload) {
+    errors.push('Payload is required');
+    return errors;
+  }
+  
+  if (!payload.userId) errors.push('userId is required');
+  if (!payload.carts || !Array.isArray(payload.carts)) {
+    errors.push('carts must be an array');
+  } else if (payload.carts.length === 0) {
+    errors.push('carts cannot be empty');
+  }
+  if (payload.deliveryMethod === 'delivery' && !payload.alamat) {
+    errors.push('alamat is required for delivery');
+  }
+  if (!payload.paymentMethod) errors.push('paymentMethod is required');
+  if (!payload.deliveryMethod) errors.push('deliveryMethod is required');
+  
+  return errors;
+};
+
+const validateCartItems = (carts) => {
+  const invalidItems = [];
+  carts.forEach((cart, index) => {
+    if (!cart.buketId) invalidItems.push(`cart[${index}]: buketId is required`);
+    if (!cart.quantity || isNaN(cart.quantity)) invalidItems.push(`cart[${index}]: quantity must be a number`);
+    if (!cart.totalPrice || isNaN(cart.totalPrice)) invalidItems.push(`cart[${index}]: totalPrice must be a number`);
+    if (!cart.basePrice || isNaN(cart.basePrice)) invalidItems.push(`cart[${index}]: basePrice must be a number`);
+    if (cart.customMaterials && !Array.isArray(cart.customMaterials)) {
+      invalidItems.push(`cart[${index}]: customMaterials must be an array if provided`);
+    }
+  });
+  return invalidItems;
+};
+
+const mapCartItems = (carts) => {
+  return carts.map(cart => ({
+    buketId: cart.buketId,
+    quantity: Number(cart.quantity),
+    totalPrice: Number(cart.totalPrice),
+    basePrice: Number(cart.basePrice),
+    name: cart.name || `Buket ${cart.buketId.substring(0, 5)}`,
+    size: cart.size || 'medium',
+    ...(cart.servicePrice && { servicePrice: Number(cart.servicePrice) }),
+    ...(cart.orderNote && { orderNote: cart.orderNote }),
+    ...(cart.requestDate && { requestDate: cart.requestDate }),
+    ...(cart.imageUrl && { imageUrl: cart.imageUrl }),
+    ...(cart.customMaterials && { 
+      customMaterials: cart.customMaterials.map(material => ({
+        materialId: material.materialId,
+        name: material.name,
+        price: Number(material.price),
+        quantity: Number(material.quantity)
+      }))
+    })
+  }));
+};
+
+// Order Handlers
 const createOrderHandler = async (request, h) => {
   const startTime = Date.now();
   const requestId = uuidv4();
@@ -89,6 +149,7 @@ const createOrderHandler = async (request, h) => {
     }
 
     const payload = request.payload;
+    logger.debug(`[${requestId}] Received payload:`, JSON.stringify(payload, null, 2));
 
     // 2. Input validation
     const validationErrors = validateOrderInput(payload);
@@ -101,12 +162,12 @@ const createOrderHandler = async (request, h) => {
 
     // 3. Destructure with defaults
     const { 
-      userId = null, 
-      carts = [], 
-      alamat = null, 
+      userId, 
+      carts, 
+      alamat, 
       ongkir = 0, 
-      paymentMethod = null, 
-      deliveryMethod = null 
+      paymentMethod, 
+      deliveryMethod 
     } = payload;
 
     // 4. Validate required fields
@@ -129,12 +190,8 @@ const createOrderHandler = async (request, h) => {
       throw error;
     }
 
-    // 6. Calculate total price with safe rounding
-    const subtotal = carts.reduce((sum, cart) => {
-      const price = Number(cart.totalPrice) || 0;
-      return sum + price;
-    }, 0);
-
+    // 6. Calculate total price
+    const subtotal = carts.reduce((sum, cart) => sum + (Number(cart.totalPrice) || 0, 0));
     const shippingCost = deliveryMethod === 'delivery' ? Math.round(Number(ongkir) || 0) : 0;
     const totalPrice = Math.round(subtotal + shippingCost);
 
@@ -155,6 +212,8 @@ const createOrderHandler = async (request, h) => {
       midtrans_status: paymentMethod === 'cod' ? null : 'pending',
       updatedAt: new Date().toISOString(),
     };
+
+    logger.debug(`[${requestId}] Order data prepared:`, JSON.stringify(orderData, null, 2));
 
     // 8. Save to Firestore
     await db.collection('orders').doc(orderId).set(orderData);
@@ -177,7 +236,10 @@ const createOrderHandler = async (request, h) => {
           bank_transfer: { bank: 'bca' },
         };
 
+        logger.debug(`[${requestId}] Midtrans transaction parameter:`, JSON.stringify(parameter, null, 2));
+        
         const transaction = await snap.createTransaction(parameter);
+        logger.debug(`[${requestId}] Midtrans response:`, JSON.stringify(transaction, null, 2));
         
         if (!transaction?.transaction_id || !transaction?.redirect_url) {
           throw Object.assign(new Error('Invalid Midtrans response'), {
@@ -204,9 +266,7 @@ const createOrderHandler = async (request, h) => {
             transactionId: transaction.transaction_id,
           },
         }).code(201);
-
       } catch (paymentError) {
-        // Normalize payment error
         const normalizedError = {
           message: paymentError.message,
           stack: paymentError.stack,
@@ -246,9 +306,7 @@ const createOrderHandler = async (request, h) => {
         })
       },
     }).code(201);
-
   } catch (error) {
-    // Normalize all unexpected errors
     const normalizedError = {
       message: error.message || 'Unknown error occurred during order creation',
       stack: error.stack || new Error().stack,
@@ -257,7 +315,6 @@ const createOrderHandler = async (request, h) => {
       details: error.details || error.invalidItems || error.missingFields || null
     };
 
-    // Enhanced error logging
     logger.error(`[${requestId}] Order creation failed`, {
       error: normalizedError,
       payloadSummary: request.payload ? {
@@ -267,7 +324,6 @@ const createOrderHandler = async (request, h) => {
       } : null
     });
 
-    // Client response
     return h.response({
       status: 'error',
       message: 'Gagal membuat order',
@@ -279,7 +335,6 @@ const createOrderHandler = async (request, h) => {
     }).code(500);
   }
 };
-// ... (other handlers remain the same with enhanced error logging)
 
 // GET ALL ORDERS HANDLER
 const getAllOrdersHandler = async (request, h) => {
@@ -297,7 +352,6 @@ const getAllOrdersHandler = async (request, h) => {
     const orders = snapshot.docs.map(doc => ({
       orderId: doc.id,
       ...doc.data(),
-      // Format tanggal untuk response
       createdAt: new Date(doc.data().createdAt).toLocaleString('id-ID'),
       updatedAt: doc.data().updatedAt ? 
         new Date(doc.data().updatedAt).toLocaleString('id-ID') : null,
@@ -313,9 +367,7 @@ const getAllOrdersHandler = async (request, h) => {
       }
     }).code(200);
   } catch (error) {
-    logger.error(`[${requestId}] Error fetching orders`, {
-      error: error.message
-    });
+    logger.error(`[${requestId}] Error fetching orders`, error);
     
     return h.response({ 
       status: 'fail', 
@@ -345,7 +397,6 @@ const getOrderDetailHandler = async (request, h) => {
     
     const orderData = doc.data();
     
-    // Format response
     const responseData = {
       orderId,
       ...orderData,
@@ -362,9 +413,7 @@ const getOrderDetailHandler = async (request, h) => {
       data: responseData 
     }).code(200);
   } catch (error) {
-    logger.error(`[${requestId}] Error fetching order details`, {
-      error: error.message
-    });
+    logger.error(`[${requestId}] Error fetching order details`, error);
     
     return h.response({ 
       status: 'error', 
@@ -415,9 +464,7 @@ const updateOrderStatusHandler = async (request, h) => {
       message: 'Status berhasil diperbarui' 
     }).code(200);
   } catch (error) {
-    logger.error(`[${requestId}] Failed to update status`, {
-      error: error.message
-    });
+    logger.error(`[${requestId}] Failed to update status`, error);
     
     return h.response({ 
       status: 'error', 
@@ -435,7 +482,6 @@ const chargePaymentHandler = async (request, h) => {
   try {
     logger.info(`[${requestId}] Processing payment charge`);
     
-    // Validasi jenis pembayaran
     const validPaymentTypes = ['bank_transfer', 'qris', 'gopay'];
     if (!validPaymentTypes.includes(paymentType)) {
       logger.warn(`[${requestId}] Invalid payment type`, { paymentType });
@@ -446,7 +492,6 @@ const chargePaymentHandler = async (request, h) => {
       }).code(400);
     }
 
-    // Dapatkan data order
     const doc = await db.collection('orders').doc(orderId).get();
     if (!doc.exists) {
       logger.warn(`[${requestId}] Order not found`);
@@ -458,7 +503,6 @@ const chargePaymentHandler = async (request, h) => {
 
     const orderData = doc.data();
     
-    // Siapkan parameter Midtrans
     const parameter = {
       transaction_details: {
         order_id: orderId,
@@ -471,7 +515,6 @@ const chargePaymentHandler = async (request, h) => {
       payment_type: paymentType,
     };
 
-    // Tambahkan parameter khusus
     if (paymentType === 'bank_transfer') {
       parameter.bank_transfer = {
         bank: bank || 'bca',
@@ -482,7 +525,6 @@ const chargePaymentHandler = async (request, h) => {
     const transaction = await snap.createTransaction(parameter);
     logger.info(`[${requestId}] Payment transaction created`);
 
-    // Update order
     await db.collection('orders').doc(orderId).update({
       paymentMethod: paymentType,
       midtrans_status: 'pending',
@@ -516,9 +558,7 @@ const chargePaymentHandler = async (request, h) => {
         updatedAt: new Date().toISOString(),
       });
     } catch (updateError) {
-      logger.error(`[${requestId}] Failed to update order status`, {
-        error: updateError.message
-      });
+      logger.error(`[${requestId}] Failed to update order status`, updateError);
     }
 
     return h.response({
@@ -543,7 +583,6 @@ const handleMidtransNotification = async (request, h) => {
       status: notification.transaction_status
     });
 
-    // Validasi signature jika diperlukan
     if (process.env.VERIFY_MIDTRANS_SIGNATURE === 'true') {
       const isValid = snap.transaction.notification(notification);
       if (!isValid) {
@@ -561,7 +600,6 @@ const handleMidtransNotification = async (request, h) => {
       return h.response({ message: 'Order tidak ditemukan' }).code(404);
     }
 
-    // Mapping status
     const statusMap = {
       'capture': 'dibayar',
       'settlement': 'dibayar',
@@ -573,7 +611,6 @@ const handleMidtransNotification = async (request, h) => {
 
     const newStatus = statusMap[transaction_status] || transaction_status;
     
-    // Data update
     const updateData = {
       status: newStatus,
       midtrans_status: transaction_status,
@@ -581,11 +618,8 @@ const handleMidtransNotification = async (request, h) => {
       updatedAt: new Date().toISOString(),
     };
 
-    // Tambahkan payment time jika pembayaran berhasil
     if (transaction_status === 'settlement' || transaction_status === 'capture') {
       updateData.payment_time = notification.settlement_time || new Date().toISOString();
-      
-      // Update payment data
       updateData.paymentData = {
         ...(doc.data().paymentData || {}),
         status: 'completed',
