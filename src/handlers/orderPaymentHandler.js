@@ -3,7 +3,7 @@ const midtransClient = require('midtrans-client');
 const { db } = require('../services/firebaseService');
 const { v4: uuidv4 } = require('uuid');
 
-// Logger sederhana
+// Logger
 const logger = {
   info: (...args) => console.log('[INFO]', ...args),
   error: (...args) => console.error('[ERROR]', ...args),
@@ -15,7 +15,7 @@ const logger = {
   }
 };
 
-// Inisialisasi Midtrans Snap
+// Midtrans Snap Initialization
 let snap;
 try {
   snap = new midtransClient.Snap({
@@ -29,16 +29,13 @@ try {
   process.exit(1);
 }
 
-// Helper functions
+// Helper Functions
 const validateOrderInput = (payload) => {
   const errors = [];
   
   if (!payload.userId) errors.push('userId is required');
   if (!payload.carts || payload.carts.length === 0) errors.push('carts cannot be empty');
   if (!payload.paymentMethod) errors.push('paymentMethod is required');
-  if (typeof payload.totalPrice !== 'number' || payload.totalPrice <= 0) {
-    errors.push('totalPrice must be a positive number');
-  }
   if (!['delivery', 'pickup'].includes(payload.deliveryMethod)) {
     errors.push('deliveryMethod must be either "delivery" or "pickup"');
   }
@@ -55,38 +52,28 @@ const validateOrderInput = (payload) => {
 
 const validateCartItems = (carts) => {
   return carts.filter(cart => {
-    // Cek identifier produk (productId atau buketId)
-    const hasProductId = !cart.productId && !cart.buketId;
-    
-    // Cek tipe data dan nilai
+    const missingBuketId = !cart.buketId;
     const invalidQuantity = typeof cart.quantity !== 'number' || cart.quantity <= 0;
-    const invalidPrice = typeof cart.price !== 'number' || cart.price <= 0;
+    const invalidPrice = typeof cart.totalPrice !== 'number' || cart.totalPrice <= 0;
     
-    return hasProductId || invalidQuantity || invalidPrice;
+    return missingBuketId || invalidQuantity || invalidPrice;
   });
 };
 
 const mapCartItems = (carts) => {
   return carts.map(cart => ({
-    // Identifier produk
-    productId: cart.productId || cart.buketId,
-    buketId: cart.buketId || cart.productId,
-    
-    // Data utama
+    cartId: cart.cartId,
+    buketId: cart.buketId,
     quantity: cart.quantity,
-    price: cart.price,
-    totalPrice: cart.price * cart.quantity,
-    
-    // Informasi produk
-    name: cart.name || 'Unknown Product',
-    imageUrl: cart.imageUrl || cart.image || null,
-    
-    // Data tambahan
-    ...(cart.size && { size: cart.size }),
-    ...(cart.basePrice && { basePrice: cart.basePrice }),
-    ...(cart.customMaterials && { customMaterials: cart.customMaterials }),
-    ...(cart.requestDate && { requestDate: cart.requestDate }),
-    ...(cart.orderNote && { orderNote: cart.orderNote }),
+    totalPrice: cart.totalPrice,
+    name: cart.name || 'Buket Tanpa Nama',
+    imageUrl: cart.imageUrl || null,
+    size: cart.size || null,
+    basePrice: cart.basePrice || 0,
+    servicePrice: cart.servicePrice || 0,
+    customMaterials: cart.customMaterials || [],
+    requestDate: cart.requestDate || null,
+    orderNote: cart.orderNote || ''
   }));
 };
 
@@ -110,7 +97,7 @@ const createOrderHandler = async (request, h) => {
       }).code(400);
     }
 
-    const { userId, carts, alamat, ongkir, paymentMethod, totalPrice, deliveryMethod } = payload;
+    const { userId, carts, alamat, ongkir, paymentMethod, deliveryMethod } = payload;
 
     // Validasi cart items
     const invalidCartItems = validateCartItems(carts);
@@ -120,14 +107,19 @@ const createOrderHandler = async (request, h) => {
         status: 'fail',
         message: 'Item keranjang tidak valid',
         errors: invalidCartItems.map(item => ({
+          cartId: item.cartId,
           missingFields: [
-            ...(!item.productId && !item.buketId ? ['product identifier'] : []),
-            ...(typeof item.quantity !== 'number' || item.quantity <= 0 ? ['valid quantity'] : []),
-            ...(typeof item.price !== 'number' || item.price <= 0 ? ['valid price'] : [])
+            ...(!item.buketId ? ['buketId'] : []),
+            ...(typeof item.quantity !== 'number' || item.quantity <= 0 ? ['quantity'] : []),
+            ...(typeof item.totalPrice !== 'number' || item.totalPrice <= 0 ? ['totalPrice'] : [])
           ]
         }))
       }).code(400);
     }
+
+    // Hitung total price dari cart items + ongkir (jika delivery)
+    const totalPrice = carts.reduce((sum, cart) => sum + cart.totalPrice, 0) + 
+                      (deliveryMethod === 'delivery' ? ongkir : 0);
 
     const orderId = `ORDER-${uuidv4()}`;
     logger.debug(`[${requestId}] Generated order ID: ${orderId}`);
@@ -141,6 +133,7 @@ const createOrderHandler = async (request, h) => {
       ongkir: deliveryMethod === 'delivery' ? ongkir : 0,
       paymentMethod,
       totalPrice,
+      servicePrice: carts.reduce((sum, cart) => sum + (cart.servicePrice || 0), 0),
       carts: mapCartItems(carts),
       status: paymentMethod === 'cod' ? 'pending' : 'menunggu pembayaran',
       createdAt: new Date().toISOString(),
@@ -159,16 +152,12 @@ const createOrderHandler = async (request, h) => {
       const cartIds = carts.map(c => c.cartId).filter(Boolean);
       
       if (cartIds.length > 0) {
-        const cartQuery = db.collection('carts')
-          .where('userId', '==', userId)
-          .where('cartId', 'in', cartIds);
-        
-        const cartSnapshot = await cartQuery.get();
         const batch = db.batch();
-        
-        cartSnapshot.forEach(doc => batch.delete(doc.ref));
+        cartIds.forEach(id => {
+          batch.delete(db.collection('carts').doc(id));
+        });
         await batch.commit();
-        logger.info(`[${requestId}] Deleted ${cartSnapshot.size} cart items`);
+        logger.info(`[${requestId}] Deleted ${cartIds.length} cart items`);
       }
     } catch (cartError) {
       logger.error(`[${requestId}] Failed to delete cart items`, { error: cartError.message });
@@ -188,11 +177,11 @@ const createOrderHandler = async (request, h) => {
           customer_details: {
             first_name: `Customer-${userId.substring(0, 8)}`,
             email: `${userId.substring(0, 8)}@customer.com`,
-            phone: '08123456789', // Default, bisa diganti
+            phone: '08123456789',
           },
           payment_type: 'bank_transfer',
           bank_transfer: {
-            bank: 'bca', // Default bank
+            bank: 'bca',
           },
         };
 
