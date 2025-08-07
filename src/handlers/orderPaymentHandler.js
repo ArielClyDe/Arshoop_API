@@ -11,27 +11,31 @@ const snap = new midtransClient.Snap({
 });
 
 // CREATE ORDER
-const createOrderHandler = async (req, res) => {
+// CREATE ORDER (Hapi.js)
+const createOrderHandler = async (request, h) => {
   try {
-    const { totalPrice, orderItems } = req.body;
-    const userId = req.user._id;
+    const { totalPrice, orderItems } = request.payload; // Hapi pakai request.payload
+    const { userId } = request.auth.credentials; // atau dari token JWT
 
     if (!orderItems || orderItems.length === 0) {
-      return res.status(400).json({ message: 'Order items are required' });
+      return h.response({ message: 'Order items are required' }).code(400);
     }
     if (!totalPrice || totalPrice <= 0) {
-      return res.status(400).json({ message: 'Total price must be greater than zero' });
+      return h.response({ message: 'Total price must be greater than zero' }).code(400);
     }
 
     const shippingCost = 10000;
     const midtransAmount = Math.round(Number(totalPrice) + shippingCost);
-    const orderId = `ORDER-${Date.now()}-${userId.toString().substring(0, 8)}`;
+    const orderId = `ORDER-${Date.now()}-${userId.substring(0, 8)}`;
 
     const parameter = {
-      transaction_details: { order_id: orderId, gross_amount: midtransAmount },
+      transaction_details: {
+        order_id: orderId,
+        gross_amount: midtransAmount
+      },
       customer_details: {
-        first_name: `Customer-${userId.toString().substring(0, 8)}`,
-        email: `${userId.toString().substring(0, 8)}@customer.com`,
+        first_name: `Customer-${userId.substring(0, 8)}`,
+        email: `${userId.substring(0, 8)}@customer.com`,
         phone: '08123456789'
       }
     };
@@ -42,44 +46,22 @@ const createOrderHandler = async (req, res) => {
       throw new Error('Midtrans Snap did not return a valid transaction');
     }
 
-    res.status(200).json({
+    return h.response({
       message: 'Order created successfully',
       snapToken: transaction.token,
       redirectUrl: transaction.redirect_url,
       orderId
-    });
+    }).code(200);
+
   } catch (error) {
     console.error('Midtrans API Error:', error.ApiResponse || error.message);
-    res.status(500).json({
+    return h.response({
       message: 'Midtrans Validation Failed',
       error: error.ApiResponse || error.message || 'Unknown error'
-    });
+    }).code(500);
   }
 };
 
-// GET ALL ORDERS
-const getAllOrdersHandler = async (request, h) => {
-  const { userId } = request.query;
-  try {
-    const snapshot = await db.collection('orders')
-      .where('userId', '==', userId)
-      .orderBy('createdAt', 'desc')
-      .get();
-
-    const orders = snapshot.docs.map(doc => ({
-      orderId: doc.id,
-      ...doc.data(),
-      createdAt: new Date(doc.data().createdAt).toLocaleString('id-ID'),
-      updatedAt: doc.data().updatedAt ? 
-        new Date(doc.data().updatedAt).toLocaleString('id-ID') : null,
-    }));
-
-    return h.response({ status: 'success', data: orders, meta: { total: orders.length } }).code(200);
-  } catch (error) {
-    console.error('Error fetching orders:', error);
-    return h.response({ status: 'fail', message: 'Gagal mengambil data order' }).code(500);
-  }
-};
 
 // GET ORDER DETAIL
 const getOrderDetailHandler = async (request, h) => {
