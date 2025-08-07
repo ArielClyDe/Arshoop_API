@@ -285,29 +285,36 @@ const createOrderHandler = async (request, h) => {
         })
       },
     }).code(201);
-  } catch (error) {
-    logger.error('Order Creation Failed', {
-      requestId,
-      error: error,
-      payload: {
-        // Mask sensitive data
-        ...payload,
-        carts: payload.carts?.map(cart => ({
-          ...cart,
-          customMaterials: cart.customMaterials ? '[REDACTED]' : undefined
-        }))
-      }
-    });
-    
-    return h.response({ 
-      status: 'error', 
-      message: 'Gagal membuat order',
-      ...(process.env.NODE_ENV === 'development' && { 
-        error: error.message,
-        stack: error.stack 
-      })
-    }).code(500);
-  }
+  }  catch (error) {
+  // Safely handle payload logging
+  const safePayload = request.payload ? {
+    userId: request.payload.userId,
+    cartCount: request.payload.carts?.length || 0,
+    paymentMethod: request.payload.paymentMethod,
+    // Don't log sensitive or large data
+    hasCustomMaterials: request.payload.carts?.some(c => c.customMaterials) || false
+  } : null;
+
+  logger.error('Order Creation Failed', {
+    requestId,
+    error: {
+      message: error.message,
+      stack: error.stack,
+      type: error.constructor.name
+    },
+    payload: safePayload,
+    occurredAt: new Date().toISOString()
+  });
+  
+  return h.response({ 
+    status: 'error', 
+    message: 'Gagal membuat order',
+    ...(process.env.NODE_ENV === 'development' && { 
+      error: error.message,
+      stack: error.stack 
+    })
+  }).code(500);
+}
 };
 
 // ... (other handlers remain the same with enhanced error logging)
