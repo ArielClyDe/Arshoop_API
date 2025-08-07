@@ -75,6 +75,27 @@ const createOrderHandler = async (request, h) => {
       deliveryMethod,
     } = payload;
 
+    // Validasi carts lebih detail
+    const invalidCartItems = carts.filter(cart => 
+      !cart.productId || !cart.quantity || !cart.price
+    );
+    
+    if (invalidCartItems.length > 0) {
+      logger.warn(`[${requestId}] Invalid cart items found`, { invalidCartItems });
+      return h.response({
+        status: 'fail',
+        message: 'Data keranjang tidak valid',
+        errors: invalidCartItems.map((item, index) => ({
+          itemIndex: index,
+          missingFields: [
+            ...(!item.productId ? ['productId'] : []),
+            ...(!item.quantity ? ['quantity'] : []),
+            ...(!item.price ? ['price'] : [])
+          ]
+        }))
+      }).code(400);
+    }
+
     const orderId = `ORDER-${uuidv4()}`;
     logger.debug(`[${requestId}] Generated order ID: ${orderId}`);
 
@@ -87,9 +108,12 @@ const createOrderHandler = async (request, h) => {
       paymentMethod,
       totalPrice,
       carts: carts.map(cart => ({
-        productId: cart.productId,
+        productId: cart.productId, // Pastikan ini tidak undefined
         quantity: cart.quantity,
-        price: cart.price
+        price: cart.price,
+        // Tambahkan field lain yang diperlukan
+        name: cart.name || null, // Contoh field opsional
+        image: cart.image || null
       })),
       status: paymentMethod === 'cod' ? 'pending' : 'menunggu pembayaran',
       createdAt: new Date().toISOString(),
@@ -97,8 +121,7 @@ const createOrderHandler = async (request, h) => {
     };
 
     logger.debug(`[${requestId}] Saving order to Firestore`, { orderId });
-    await db.collection('orders').doc(orderId).set(orderData);
-    logger.info(`[${requestId}] Order saved successfully`, { orderId });
+    await db.collection('orders').doc(orderId).set(orderData, { merge: true });
 
     // Hapus cart items
     try {
