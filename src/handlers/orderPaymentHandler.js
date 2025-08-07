@@ -3,8 +3,6 @@ const midtransClient = require('midtrans-client');
 const { db } = require('../services/firebaseService');
 const { v4: uuidv4 } = require('uuid');
 
-// Enhanced logger with error tracking
-const midtransClient = require('midtrans-client');
 
 // Inisialisasi Snap
 const snap = new midtransClient.Snap({
