@@ -2,6 +2,8 @@
 const midtransClient = require('midtrans-client');
 const { db } = require('../services/firebaseService');
 const { v4: uuidv4 } = require('uuid');
+
+// Logger sederhana
 const logger = {
   info: (...args) => console.log('[INFO]', ...args),
   error: (...args) => console.error('[ERROR]', ...args),
@@ -13,7 +15,7 @@ const logger = {
   }
 };
 
-// Inisialisasi Midtrans Snap dengan error handling
+// Inisialisasi Midtrans Snap
 let snap;
 try {
   snap = new midtransClient.Snap({
@@ -21,66 +23,107 @@ try {
     serverKey: process.env.MIDTRANS_SERVER_KEY,
     clientKey: process.env.MIDTRANS_CLIENT_KEY,
   });
-  logger.info('Midtrans Snap client initialized successfully');
-} catch (initError) {
-  logger.error('Failed to initialize Midtrans client:', initError);
-  process.exit(1); // Keluar jika inisialisasi gagal
+  logger.info('Midtrans client initialized');
+} catch (error) {
+  logger.error('Failed to initialize Midtrans:', error);
+  process.exit(1);
 }
 
-// Helper function untuk validasi input
+// Helper functions
+const validateOrderInput = (payload) => {
+  const errors = [];
+  
+  if (!payload.userId) errors.push('userId is required');
+  if (!payload.carts || payload.carts.length === 0) errors.push('carts cannot be empty');
+  if (!payload.paymentMethod) errors.push('paymentMethod is required');
+  if (typeof payload.totalPrice !== 'number' || payload.totalPrice <= 0) {
+    errors.push('totalPrice must be a positive number');
+  }
+  if (!['delivery', 'pickup'].includes(payload.deliveryMethod)) {
+    errors.push('deliveryMethod must be either "delivery" or "pickup"');
+  }
+  
+  if (payload.deliveryMethod === 'delivery') {
+    if (!payload.alamat) errors.push('alamat is required for delivery');
+    if (typeof payload.ongkir !== 'number' || payload.ongkir < 0) {
+      errors.push('ongkir must be a positive number');
+    }
+  }
+
+  return errors;
+};
+
+const validateCartItems = (carts) => {
+  return carts.filter(cart => {
+    // Cek identifier produk (productId atau buketId)
+    const hasProductId = !cart.productId && !cart.buketId;
+    
+    // Cek tipe data dan nilai
+    const invalidQuantity = typeof cart.quantity !== 'number' || cart.quantity <= 0;
+    const invalidPrice = typeof cart.price !== 'number' || cart.price <= 0;
+    
+    return hasProductId || invalidQuantity || invalidPrice;
+  });
+};
+
+const mapCartItems = (carts) => {
+  return carts.map(cart => ({
+    // Identifier produk
+    productId: cart.productId || cart.buketId,
+    buketId: cart.buketId || cart.productId,
+    
+    // Data utama
+    quantity: cart.quantity,
+    price: cart.price,
+    totalPrice: cart.price * cart.quantity,
+    
+    // Informasi produk
+    name: cart.name || 'Unknown Product',
+    imageUrl: cart.imageUrl || cart.image || null,
+    
+    // Data tambahan
+    ...(cart.size && { size: cart.size }),
+    ...(cart.basePrice && { basePrice: cart.basePrice }),
+    ...(cart.customMaterials && { customMaterials: cart.customMaterials }),
+    ...(cart.requestDate && { requestDate: cart.requestDate }),
+    ...(cart.orderNote && { orderNote: cart.orderNote }),
+  }));
+};
+
 // ORDER HANDLERS
 const createOrderHandler = async (request, h) => {
   const startTime = Date.now();
   const requestId = uuidv4();
   
   try {
-    logger.info(`[${requestId}] Starting order creation`, { payload: request.payload });
+    logger.info(`[${requestId}] Order creation started`);
 
     const payload = request.payload;
-    
-    // Validasi input dasar
     const validationErrors = validateOrderInput(payload);
+    
     if (validationErrors.length > 0) {
       logger.warn(`[${requestId}] Validation failed`, { errors: validationErrors });
       return h.response({
         status: 'fail',
-        message: 'Validation error',
+        message: 'Data tidak valid',
         errors: validationErrors
       }).code(400);
     }
 
-    const {
-      userId,
-      carts,
-      alamat,
-      ongkir,
-      paymentMethod,
-      totalPrice,
-      deliveryMethod,
-    } = payload;
+    const { userId, carts, alamat, ongkir, paymentMethod, totalPrice, deliveryMethod } = payload;
 
-    // Validasi carts - kompatibel dengan productId dan buketId
-    const invalidCartItems = carts.filter(cart => 
-      (!cart.productId && !cart.buketId) || 
-      !cart.quantity || 
-      !cart.price ||
-      typeof cart.quantity !== 'number' ||
-      typeof cart.price !== 'number'
-    );
-    
+    // Validasi cart items
+    const invalidCartItems = validateCartItems(carts);
     if (invalidCartItems.length > 0) {
-      logger.warn(`[${requestId}] Invalid cart items found`, { invalidCartItems });
+      logger.warn(`[${requestId}] Invalid cart items`, { count: invalidCartItems.length });
       return h.response({
         status: 'fail',
-        message: 'Data keranjang tidak valid',
-        errors: invalidCartItems.map((item, index) => ({
-          itemIndex: index,
-          problems: [
-            ...(!item.productId && !item.buketId ? ['Missing product identifier'] : []),
-            ...(!item.quantity ? ['Missing quantity'] : []),
-            ...(!item.price ? ['Missing price'] : []),
-            ...(typeof item.quantity !== 'number' ? ['Quantity must be a number'] : []),
-            ...(typeof item.price !== 'number' ? ['Price must be a number'] : [])
+        message: 'Item keranjang tidak valid',
+        errors: invalidCartItems.map(item => ({
+          missingFields: [
+            ...(!item.productId && !item.buketId ? ['product identifier'] : []),
+            ...(typeof item.quantity !== 'number' || item.quantity <= 0 ? ['valid quantity'] : []),
+            ...(typeof item.price !== 'number' || item.price <= 0 ? ['valid price'] : [])
           ]
         }))
       }).code(400);
@@ -98,59 +141,38 @@ const createOrderHandler = async (request, h) => {
       ongkir: deliveryMethod === 'delivery' ? ongkir : 0,
       paymentMethod,
       totalPrice,
-      carts: carts.map(cart => ({
-        // Identifier produk
-        productId: cart.productId || cart.buketId, // Gunakan productId jika ada, fallback ke buketId
-        buketId: cart.buketId, // Simpan juga buketId asli
-        
-        // Data utama
-        quantity: cart.quantity,
-        price: cart.price,
-        totalPrice: cart.price * cart.quantity,
-        
-        // Informasi produk
-        name: cart.name || 'Unknown Product',
-        imageUrl: cart.imageUrl || cart.image || null,
-        
-        // Data tambahan dari cart
-        ...(cart.size && { size: cart.size }),
-        ...(cart.basePrice && { basePrice: cart.basePrice }),
-        ...(cart.customMaterials && { customMaterials: cart.customMaterials }),
-        ...(cart.requestDate && { requestDate: cart.requestDate }),
-        ...(cart.orderNote && { orderNote: cart.orderNote }),
-      })),
+      carts: mapCartItems(carts),
       status: paymentMethod === 'cod' ? 'pending' : 'menunggu pembayaran',
       createdAt: new Date().toISOString(),
       midtrans_status: paymentMethod === 'cod' ? null : 'pending',
       updatedAt: new Date().toISOString(),
     };
 
-    logger.debug(`[${requestId}] Saving order to Firestore`, { orderId });
+    // Simpan order ke Firestore
+    logger.debug(`[${requestId}] Saving order to Firestore`);
     await db.collection('orders').doc(orderId).set(orderData);
+    logger.info(`[${requestId}] Order saved successfully`);
 
     // Hapus cart items yang sudah diproses
     try {
-      logger.debug(`[${requestId}] Deleting processed cart items for user ${userId}`);
-      const cartQuery = db.collection('carts')
-        .where('userId', '==', userId)
-        .where('buketId', 'in', carts.map(c => c.buketId));
+      logger.debug(`[${requestId}] Deleting processed cart items`);
+      const cartIds = carts.map(c => c.cartId).filter(Boolean);
       
-      const cartSnapshot = await cartQuery.get();
-      const batch = db.batch();
-      
-      cartSnapshot.forEach(doc => {
-        logger.debug(`[${requestId}] Deleting cart item ${doc.id}`);
-        batch.delete(doc.ref);
-      });
-      
-      await batch.commit();
-      logger.info(`[${requestId}] Deleted ${cartSnapshot.size} cart items`);
+      if (cartIds.length > 0) {
+        const cartQuery = db.collection('carts')
+          .where('userId', '==', userId)
+          .where('cartId', 'in', cartIds);
+        
+        const cartSnapshot = await cartQuery.get();
+        const batch = db.batch();
+        
+        cartSnapshot.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        logger.info(`[${requestId}] Deleted ${cartSnapshot.size} cart items`);
+      }
     } catch (cartError) {
-      logger.error(`[${requestId}] Failed to delete cart items`, { 
-        error: cartError.message,
-        stack: cartError.stack 
-      });
-      // Tidak mengembalikan error karena order sudah berhasil dibuat
+      logger.error(`[${requestId}] Failed to delete cart items`, { error: cartError.message });
+      // Lanjutkan karena order sudah berhasil dibuat
     }
 
     // Proses pembayaran untuk metode transfer
@@ -164,23 +186,22 @@ const createOrderHandler = async (request, h) => {
             gross_amount: totalPrice,
           },
           customer_details: {
-            first_name: userId, // Anda bisa menambahkan data customer lebih lengkap
-            email: `${userId}@customers.example.com`, // Contoh email
+            first_name: `Customer-${userId.substring(0, 8)}`,
+            email: `${userId.substring(0, 8)}@customer.com`,
+            phone: '08123456789', // Default, bisa diganti
           },
           payment_type: 'bank_transfer',
           bank_transfer: {
-            bank: 'bca', // Default bank, bisa diubah berdasarkan input
+            bank: 'bca', // Default bank
           },
         };
 
         const transaction = await snap.createTransaction(parameter);
         logger.info(`[${requestId}] Midtrans transaction created`, { 
-          transactionId: transaction.transaction_id,
-          orderId,
-          paymentUrl: transaction.redirect_url 
+          transactionId: transaction.transaction_id 
         });
 
-        // Update order dengan data transaksi
+        // Update order dengan data pembayaran
         await db.collection('orders').doc(orderId).update({
           paymentData: {
             transactionId: transaction.transaction_id,
@@ -195,17 +216,16 @@ const createOrderHandler = async (request, h) => {
           message: 'Order dan pembayaran berhasil dibuat',
           data: {
             orderId,
-            paymentData: transaction,
+            paymentUrl: transaction.redirect_url,
+            transactionId: transaction.transaction_id,
           },
         }).code(201);
       } catch (midtransError) {
         logger.error(`[${requestId}] Midtrans transaction failed`, {
           error: midtransError.message,
-          midtransResponse: midtransError.ApiResponse,
-          stack: midtransError.stack
+          response: midtransError.ApiResponse
         });
 
-        // Update order status untuk mencerminkan kegagalan pembayaran
         await db.collection('orders').doc(orderId).update({
           status: 'pembayaran gagal',
           midtrans_status: 'error',
@@ -218,16 +238,13 @@ const createOrderHandler = async (request, h) => {
           message: 'Pembayaran gagal diproses',
           error: process.env.NODE_ENV === 'development' ? 
             (midtransError.ApiResponse?.error_messages || midtransError.message) : 
-            undefined,
+            'Terjadi kesalahan saat memproses pembayaran',
         }).code(502);
       }
     }
 
-    const responseTime = Date.now() - startTime;
     logger.info(`[${requestId}] Order created successfully`, { 
-      orderId,
-      responseTime: `${responseTime}ms`,
-      paymentMethod
+      responseTime: `${Date.now() - startTime}ms` 
     });
 
     return h.response({
@@ -235,26 +252,21 @@ const createOrderHandler = async (request, h) => {
       message: 'Order berhasil dibuat',
       data: { 
         orderId,
-        paymentMethod,
         ...(paymentMethod === 'cod' && { 
-          instructions: 'Pembayaran akan dilakukan saat barang diterima' 
+          instructions: 'Pembayaran dilakukan saat barang diterima' 
         })
       },
     }).code(201);
   } catch (error) {
     logger.error(`[${requestId}] Order creation failed`, {
       error: error.message,
-      stack: error.stack,
-      payload: request.payload
+      stack: error.stack
     });
     
     return h.response({ 
       status: 'error', 
       message: 'Gagal membuat order',
-      ...(process.env.NODE_ENV === 'development' && {
-        error: error.message,
-        stack: error.stack
-      })
+      ...(process.env.NODE_ENV === 'development' && { error: error.message })
     }).code(500);
   }
 };
@@ -267,7 +279,6 @@ const getAllOrdersHandler = async (request, h) => {
   try {
     logger.info(`[${requestId}] Fetching orders for user ${userId}`);
     
-    // Dapatkan semua order untuk user, diurutkan berdasarkan tanggal terbaru
     const snapshot = await db.collection('orders')
       .where('userId', '==', userId)
       .orderBy('createdAt', 'desc')
@@ -277,48 +288,134 @@ const getAllOrdersHandler = async (request, h) => {
       orderId: doc.id,
       ...doc.data(),
       // Format tanggal untuk response
-      createdAt: formatDate(doc.data().createdAt),
-      updatedAt: doc.data().updatedAt ? formatDate(doc.data().updatedAt) : null,
+      createdAt: new Date(doc.data().createdAt).toLocaleString('id-ID'),
+      updatedAt: doc.data().updatedAt ? 
+        new Date(doc.data().updatedAt).toLocaleString('id-ID') : null,
     }));
     
-    logger.info(`[${requestId}] Found ${orders.length} orders for user ${userId}`);
+    logger.info(`[${requestId}] Found ${orders.length} orders`);
     
     return h.response({ 
       status: 'success', 
       data: orders,
       meta: {
         total: orders.length,
-        returned: orders.length
       }
     }).code(200);
   } catch (error) {
     logger.error(`[${requestId}] Error fetching orders`, {
-      userId,
-      error: error.message,
-      stack: error.stack
+      error: error.message
     });
     
     return h.response({ 
       status: 'fail', 
       message: 'Gagal mengambil data order',
-      ...(process.env.NODE_ENV === 'development' && {
-        error: error.message
-      })
+      ...(process.env.NODE_ENV === 'development' && { error: error.message })
     }).code(500);
   }
 };
 
-// Helper function untuk format tanggal
-function formatDate(dateString) {
-  const options = { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  };
-  return new Date(dateString).toLocaleDateString('id-ID', options);
-}
+// GET ORDER DETAIL HANDLER
+const getOrderDetailHandler = async (request, h) => {
+  const { orderId } = request.params;
+  const requestId = uuidv4();
+  
+  try {
+    logger.info(`[${requestId}] Fetching order details`);
+    
+    const doc = await db.collection('orders').doc(orderId).get();
+    
+    if (!doc.exists) {
+      logger.warn(`[${requestId}] Order not found`);
+      return h.response({ 
+        status: 'fail', 
+        message: 'Order tidak ditemukan' 
+      }).code(404);
+    }
+    
+    const orderData = doc.data();
+    
+    // Format response
+    const responseData = {
+      orderId,
+      ...orderData,
+      createdAt: new Date(orderData.createdAt).toLocaleString('id-ID'),
+      updatedAt: orderData.updatedAt ? 
+        new Date(orderData.updatedAt).toLocaleString('id-ID') : null,
+      totalItems: orderData.carts.reduce((sum, item) => sum + item.quantity, 0),
+    };
+    
+    logger.info(`[${requestId}] Order details retrieved`);
+    
+    return h.response({ 
+      status: 'success', 
+      data: responseData 
+    }).code(200);
+  } catch (error) {
+    logger.error(`[${requestId}] Error fetching order details`, {
+      error: error.message
+    });
+    
+    return h.response({ 
+      status: 'error', 
+      message: 'Gagal mengambil detail order',
+      ...(process.env.NODE_ENV === 'development' && { error: error.message })
+    }).code(500);
+  }
+};
+
+// UPDATE ORDER STATUS HANDLER
+const updateOrderStatusHandler = async (request, h) => {
+  const { orderId } = request.params;
+  const { status } = request.payload;
+  const requestId = uuidv4();
+  
+  try {
+    logger.info(`[${requestId}] Updating order status`);
+    
+    const doc = await db.collection('orders').doc(orderId).get();
+    
+    if (!doc.exists) {
+      logger.warn(`[${requestId}] Order not found`);
+      return h.response({ 
+        status: 'fail', 
+        message: 'Order tidak ditemukan' 
+      }).code(404);
+    }
+    
+    const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      logger.warn(`[${requestId}] Invalid status`, { status });
+      return h.response({
+        status: 'fail',
+        message: 'Status tidak valid',
+        validStatuses
+      }).code(400);
+    }
+    
+    await db.collection('orders').doc(orderId).update({ 
+      status,
+      updatedAt: new Date().toISOString() 
+    });
+    
+    logger.info(`[${requestId}] Order status updated`);
+    
+    return h.response({ 
+      status: 'success', 
+      message: 'Status berhasil diperbarui' 
+    }).code(200);
+  } catch (error) {
+    logger.error(`[${requestId}] Failed to update status`, {
+      error: error.message
+    });
+    
+    return h.response({ 
+      status: 'error', 
+      message: 'Gagal memperbarui status',
+      ...(process.env.NODE_ENV === 'development' && { error: error.message })
+    }).code(500);
+  }
+};
 
 // PAYMENT HANDLERS
 const chargePaymentHandler = async (request, h) => {
@@ -326,96 +423,90 @@ const chargePaymentHandler = async (request, h) => {
   const requestId = uuidv4();
   
   try {
-    logger.info(`[${requestId}] Processing payment charge`, { 
-      orderId, 
-      paymentType,
-      bank
-    });
-
-    // Validasi input
-    if (!['bank_transfer', 'qris', 'gopay'].includes(paymentType)) {
+    logger.info(`[${requestId}] Processing payment charge`);
+    
+    // Validasi jenis pembayaran
+    const validPaymentTypes = ['bank_transfer', 'qris', 'gopay'];
+    if (!validPaymentTypes.includes(paymentType)) {
       logger.warn(`[${requestId}] Invalid payment type`, { paymentType });
       return h.response({
         status: 'fail',
         message: 'Jenis pembayaran tidak valid',
-        validTypes: ['bank_transfer', 'qris', 'gopay']
+        validPaymentTypes
       }).code(400);
     }
 
     // Dapatkan data order
-    const orderDoc = await db.collection('orders').doc(orderId).get();
-    if (!orderDoc.exists) {
-      logger.warn(`[${requestId}] Order not found`, { orderId });
+    const doc = await db.collection('orders').doc(orderId).get();
+    if (!doc.exists) {
+      logger.warn(`[${requestId}] Order not found`);
       return h.response({
         status: 'fail',
         message: 'Order tidak ditemukan',
       }).code(404);
     }
 
-    const orderData = orderDoc.data();
-    logger.debug(`[${requestId}] Order details`, { 
-      totalPrice: orderData.totalPrice,
-      userId: orderData.userId
-    });
-
+    const orderData = doc.data();
+    
+    // Siapkan parameter Midtrans
     const parameter = {
       transaction_details: {
         order_id: orderId,
         gross_amount: orderData.totalPrice,
       },
       customer_details: {
-        user_id: orderData.userId,
+        first_name: `Customer-${orderData.userId.substring(0, 8)}`,
+        email: `${orderData.userId.substring(0, 8)}@customer.com`,
       },
       payment_type: paymentType,
     };
 
-    // Tambahkan parameter khusus berdasarkan jenis pembayaran
+    // Tambahkan parameter khusus
     if (paymentType === 'bank_transfer') {
       parameter.bank_transfer = {
         bank: bank || 'bca',
       };
     }
 
-    logger.debug(`[${requestId}] Sending request to Midtrans`, { parameter });
+    logger.debug(`[${requestId}] Creating Midtrans transaction`);
     const transaction = await snap.createTransaction(parameter);
-    logger.info(`[${requestId}] Midtrans response received`, {
-      transactionId: transaction.transaction_id,
-      paymentType
-    });
+    logger.info(`[${requestId}] Payment transaction created`);
 
     // Update order
     await db.collection('orders').doc(orderId).update({
       paymentMethod: paymentType,
       midtrans_status: 'pending',
+      paymentData: {
+        transactionId: transaction.transaction_id,
+        paymentUrl: transaction.redirect_url,
+        status: 'pending',
+      },
       updatedAt: new Date().toISOString(),
     });
 
     return h.response({
       status: 'success',
-      message: 'Transaksi berhasil dibuat',
+      message: 'Pembayaran berhasil diproses',
       data: {
-        ...transaction,
-        orderId,
-        paymentMethod: paymentType,
+        paymentUrl: transaction.redirect_url,
+        transactionId: transaction.transaction_id,
+        paymentType,
       },
     }).code(200);
   } catch (error) {
     logger.error(`[${requestId}] Payment processing failed`, {
-      orderId,
       error: error.message,
-      midtransError: error.ApiResponse?.error_messages || undefined,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      response: error.ApiResponse
     });
 
-    // Coba update order status jika error
     try {
       await db.collection('orders').doc(orderId).update({
         midtrans_status: 'error',
+        paymentError: error.ApiResponse?.error_messages || error.message,
         updatedAt: new Date().toISOString(),
       });
     } catch (updateError) {
-      logger.error(`[${requestId}] Failed to update order status after payment failure`, {
-        orderId,
+      logger.error(`[${requestId}] Failed to update order status`, {
         error: updateError.message
       });
     }
@@ -423,43 +514,44 @@ const chargePaymentHandler = async (request, h) => {
     return h.response({
       status: 'error',
       message: 'Gagal memproses pembayaran',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      midtransError: error.ApiResponse?.error_messages || undefined,
+      ...(process.env.NODE_ENV === 'development' && {
+        error: error.message,
+        midtransError: error.ApiResponse?.error_messages
+      })
     }).code(500);
   }
 };
 
+// MIDTRANS NOTIFICATION HANDLER
 const handleMidtransNotification = async (request, h) => {
   const notification = request.payload;
-  const signatureKey = request.headers['x-callback-signature'];
   const requestId = uuidv4();
 
   try {
-    logger.info(`[${requestId}] Received Midtrans notification`, {
+    logger.info(`[${requestId}] Received payment notification`, {
       orderId: notification.order_id,
-      transactionStatus: notification.transaction_status,
-      fraudStatus: notification.fraud_status,
+      status: notification.transaction_status
     });
 
-    // Validasi signature (opsional tapi direkomendasikan)
+    // Validasi signature jika diperlukan
     if (process.env.VERIFY_MIDTRANS_SIGNATURE === 'true') {
       const isValid = snap.transaction.notification(notification);
       if (!isValid) {
-        logger.warn(`[${requestId}] Invalid Midtrans signature`, { signatureKey });
+        logger.warn(`[${requestId}] Invalid signature`);
         return h.response({ message: 'Signature tidak valid' }).code(403);
       }
     }
 
-    const { transaction_status, order_id, fraud_status } = notification;
+    const { order_id, transaction_status, fraud_status } = notification;
     const orderRef = db.collection('orders').doc(order_id);
-    const orderSnap = await orderRef.get();
+    const doc = await orderRef.get();
 
-    if (!orderSnap.exists) {
-      logger.warn(`[${requestId}] Order not found`, { orderId: order_id });
+    if (!doc.exists) {
+      logger.warn(`[${requestId}] Order not found`);
       return h.response({ message: 'Order tidak ditemukan' }).code(404);
     }
 
-    // Mapping status Midtrans ke status aplikasi
+    // Mapping status
     const statusMap = {
       'capture': 'dibayar',
       'settlement': 'dibayar',
@@ -470,12 +562,8 @@ const handleMidtransNotification = async (request, h) => {
     };
 
     const newStatus = statusMap[transaction_status] || transaction_status;
-    logger.debug(`[${requestId}] Updating order status`, {
-      from: orderSnap.data().status,
-      to: newStatus
-    });
-
-    // Update order
+    
+    // Data update
     const updateData = {
       status: newStatus,
       midtrans_status: transaction_status,
@@ -483,25 +571,31 @@ const handleMidtransNotification = async (request, h) => {
       updatedAt: new Date().toISOString(),
     };
 
-    // Jika pembayaran berhasil, tambahkan payment_time
+    // Tambahkan payment time jika pembayaran berhasil
     if (transaction_status === 'settlement' || transaction_status === 'capture') {
       updateData.payment_time = notification.settlement_time || new Date().toISOString();
+      
+      // Update payment data
+      updateData.paymentData = {
+        ...(doc.data().paymentData || {}),
+        status: 'completed',
+        settlementTime: updateData.payment_time
+      };
     }
 
     await orderRef.update(updateData);
-    logger.info(`[${requestId}] Order updated successfully`, { orderId: order_id, newStatus });
+    logger.info(`[${requestId}] Order status updated`, { newStatus });
 
-    return h.response({ message: 'Notifikasi diproses' }).code(200);
+    return h.response({ message: 'Notifikasi berhasil diproses' }).code(200);
   } catch (error) {
     logger.error(`[${requestId}] Notification handling failed`, {
       error: error.message,
-      notification,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      notification
     });
 
     return h.response({ 
-      error: 'Internal Server Error',
-      requestId // Untuk debugging
+      error: 'Terjadi kesalahan saat memproses notifikasi',
+      ...(process.env.NODE_ENV === 'development' && { details: error.message })
     }).code(500);
   }
 };
