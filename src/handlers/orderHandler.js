@@ -11,10 +11,17 @@ const createOrderHandler = async (request, h) => {
       ongkir,
       paymentMethod,
       totalPrice,
+      deliveryMethod, // <-- tambahkan
     } = request.payload;
 
-    if (!userId || !carts || carts.length === 0 || !alamat || !paymentMethod || !totalPrice) {
+    // Validasi dasar
+    if (!userId || !carts || carts.length === 0 || !paymentMethod || !totalPrice || !deliveryMethod) {
       return h.response({ status: 'fail', message: 'Data tidak lengkap' }).code(400);
+    }
+
+    // Validasi khusus jika delivery
+    if (deliveryMethod === 'delivery' && (!alamat || !ongkir)) {
+      return h.response({ status: 'fail', message: 'Alamat dan ongkir wajib untuk pengiriman' }).code(400);
     }
 
     const orderId = uuidv4();
@@ -22,8 +29,9 @@ const createOrderHandler = async (request, h) => {
     const orderData = {
       orderId,
       userId,
-      alamat,
-      ongkir,
+      deliveryMethod,
+      alamat: deliveryMethod === 'delivery' ? alamat : null,
+      ongkir: deliveryMethod === 'delivery' ? ongkir : 0,
       paymentMethod,
       totalPrice,
       carts,
@@ -49,6 +57,7 @@ const createOrderHandler = async (request, h) => {
     return h.response({ status: 'error', message: 'Gagal membuat order' }).code(500);
   }
 };
+
 
 // GET /orders
 const getAllOrdersHandler = async (request, h) => {
