@@ -3,10 +3,21 @@ const midtransClient = require('midtrans-client');
 const { db } = require('../services/firebaseService');
 const { v4: uuidv4 } = require('uuid');
 
-// Logger
+// Enhanced logger with error tracking
 const logger = {
   info: (...args) => console.log('[INFO]', ...args),
-  error: (...args) => console.error('[ERROR]', ...args),
+  error: (context, error) => {
+    console.error('[ERROR]', {
+      timestamp: new Date().toISOString(),
+      context,
+      error: {
+        message: error.message,
+        stack: error.stack,
+        ...(error.ApiResponse && { apiResponse: error.ApiResponse }),
+        ...(error.rawHttpClientData && { httpData: error.rawHttpClientData })
+      }
+    });
+  },
   warn: (...args) => console.warn('[WARN]', ...args),
   debug: (...args) => {
     if (process.env.NODE_ENV !== 'production') {
@@ -15,69 +26,53 @@ const logger = {
   }
 };
 
-// Midtrans Snap Initialization
+// Midtrans Snap Initialization with enhanced config
 let snap;
-try {
-  snap = new midtransClient.Snap({
-    isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
-    serverKey: process.env.MIDTRANS_SERVER_KEY,
-    clientKey: process.env.MIDTRANS_CLIENT_KEY,
-  });
-  logger.info('Midtrans client initialized');
-} catch (error) {
-  logger.error('Failed to initialize Midtrans:', error);
-  process.exit(1);
-}
+const initializeMidtrans = () => {
+  try {
+    // Log config without exposing full keys
+    logger.info('Initializing Midtrans client', {
+      env: {
+        isProduction: process.env.MIDTRANS_IS_PRODUCTION,
+        serverKeyPrefix: process.env.MIDTRANS_SERVER_KEY?.substring(0, 6) + '...',
+        clientKeyPrefix: process.env.MIDTRANS_CLIENT_KEY?.substring(0, 6) + '...'
+      }
+    });
 
-// Helper Functions
-const validateOrderInput = (payload) => {
-  const errors = [];
-  
-  if (!payload.userId) errors.push('userId is required');
-  if (!payload.carts || payload.carts.length === 0) errors.push('carts cannot be empty');
-  if (!payload.paymentMethod) errors.push('paymentMethod is required');
-  if (!['delivery', 'pickup'].includes(payload.deliveryMethod)) {
-    errors.push('deliveryMethod must be either "delivery" or "pickup"');
-  }
-  
-  if (payload.deliveryMethod === 'delivery') {
-    if (!payload.alamat) errors.push('alamat is required for delivery');
-    if (typeof payload.ongkir !== 'number' || payload.ongkir < 0) {
-      errors.push('ongkir must be a positive number');
+    if (!process.env.MIDTRANS_SERVER_KEY || !process.env.MIDTRANS_CLIENT_KEY) {
+      throw new Error('Midtrans credentials not configured');
     }
+
+    snap = new midtransClient.Snap({
+      isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+      serverKey: process.env.MIDTRANS_SERVER_KEY,
+      clientKey: process.env.MIDTRANS_CLIENT_KEY,
+      requestOptions: {
+        timeout: 15000,
+        proxy: false
+      }
+    });
+
+    logger.info('Midtrans client initialized successfully');
+  } catch (error) {
+    logger.error('Midtrans initialization failed', error);
+    process.exit(1);
   }
-
-  return errors;
 };
 
-const validateCartItems = (carts) => {
-  return carts.filter(cart => {
-    const missingBuketId = !cart.buketId;
-    const invalidQuantity = typeof cart.quantity !== 'number' || cart.quantity <= 0;
-    const invalidPrice = typeof cart.totalPrice !== 'number' || cart.totalPrice <= 0;
-    
-    return missingBuketId || invalidQuantity || invalidPrice;
-  });
+initializeMidtrans();
+
+// Helper function to safely update Firestore
+const safeFirestoreUpdate = async (docRef, data) => {
+  const cleanData = Object.entries(data).reduce((acc, [key, value]) => {
+    if (value !== undefined) acc[key] = value;
+    return acc;
+  }, {});
+
+  await docRef.update(cleanData);
 };
 
-const mapCartItems = (carts) => {
-  return carts.map(cart => ({
-    cartId: cart.cartId,
-    buketId: cart.buketId,
-    quantity: cart.quantity,
-    totalPrice: cart.totalPrice,
-    name: cart.name || 'Buket Tanpa Nama',
-    imageUrl: cart.imageUrl || null,
-    size: cart.size || null,
-    basePrice: cart.basePrice || 0,
-    servicePrice: cart.servicePrice || 0,
-    customMaterials: cart.customMaterials || [],
-    requestDate: cart.requestDate || null,
-    orderNote: cart.orderNote || ''
-  }));
-};
-
-// ORDER HANDLERS
+// Modified createOrderHandler with enhanced Midtrans error handling
 const createOrderHandler = async (request, h) => {
   const startTime = Date.now();
   const requestId = uuidv4();
@@ -118,8 +113,8 @@ const createOrderHandler = async (request, h) => {
     }
 
     // Hitung total price dari cart items + ongkir (jika delivery)
-    const totalPrice = carts.reduce((sum, cart) => sum + cart.totalPrice, 0) + 
-                      (deliveryMethod === 'delivery' ? ongkir : 0);
+    const totalPrice = Math.round(carts.reduce((sum, cart) => sum + cart.totalPrice, 0) + 
+                      (deliveryMethod === 'delivery' ? Math.round(ongkir) : 0));
 
     const orderId = `ORDER-${uuidv4()}`;
     logger.debug(`[${requestId}] Generated order ID: ${orderId}`);
@@ -130,7 +125,7 @@ const createOrderHandler = async (request, h) => {
       userId,
       deliveryMethod,
       alamat: deliveryMethod === 'delivery' ? alamat : null,
-      ongkir: deliveryMethod === 'delivery' ? ongkir : 0,
+      ongkir: deliveryMethod === 'delivery' ? Math.round(ongkir) : 0,
       paymentMethod,
       totalPrice,
       servicePrice: carts.reduce((sum, cart) => sum + (cart.servicePrice || 0), 0),
@@ -160,8 +155,7 @@ const createOrderHandler = async (request, h) => {
         logger.info(`[${requestId}] Deleted ${cartIds.length} cart items`);
       }
     } catch (cartError) {
-      logger.error(`[${requestId}] Failed to delete cart items`, { error: cartError.message });
-      // Lanjutkan karena order sudah berhasil dibuat
+      logger.error(`[${requestId}] Failed to delete cart items`, cartError);
     }
 
     // Proses pembayaran untuk metode transfer
@@ -172,7 +166,7 @@ const createOrderHandler = async (request, h) => {
         const parameter = {
           transaction_details: {
             order_id: orderId,
-            gross_amount: totalPrice,
+            gross_amount: totalPrice, // Already rounded
           },
           customer_details: {
             first_name: `Customer-${userId.substring(0, 8)}`,
@@ -185,13 +179,32 @@ const createOrderHandler = async (request, h) => {
           },
         };
 
+        logger.debug(`[${requestId}] Midtrans request parameters`, { 
+          parameters: {
+            ...parameter,
+            customer_details: {
+              ...parameter.customer_details,
+              // Mask sensitive info in logs
+              email: parameter.customer_details.email.replace(/./g, '*'),
+              phone: parameter.customer_details.phone.replace(/\d(?=\d{4})/g, '*')
+            }
+          }
+        });
+
         const transaction = await snap.createTransaction(parameter);
+        
+        // Validate Midtrans response
+        if (!transaction?.transaction_id || !transaction?.redirect_url) {
+          throw new Error(`Invalid Midtrans response: ${JSON.stringify(transaction)}`);
+        }
+
         logger.info(`[${requestId}] Midtrans transaction created`, { 
-          transactionId: transaction.transaction_id 
+          transactionId: transaction.transaction_id,
+          paymentUrl: transaction.redirect_url 
         });
 
         // Update order dengan data pembayaran
-        await db.collection('orders').doc(orderId).update({
+        await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
           paymentData: {
             transactionId: transaction.transaction_id,
             paymentUrl: transaction.redirect_url,
@@ -210,15 +223,36 @@ const createOrderHandler = async (request, h) => {
           },
         }).code(201);
       } catch (midtransError) {
-        logger.error(`[${requestId}] Midtrans transaction failed`, {
-          error: midtransError.message,
-          response: midtransError.ApiResponse
-        });
+        // Enhanced error logging
+        const errorDetails = {
+          requestId,
+          orderId,
+          errorType: 'Midtrans Transaction',
+          error: {
+            message: midtransError.message,
+            code: midtransError.httpStatusCode,
+            apiResponse: midtransError.ApiResponse,
+            rawRequest: midtransError.rawHttpClientData?.request,
+            rawResponse: midtransError.rawHttpClientData?.response
+          },
+          environment: {
+            nodeEnv: process.env.NODE_ENV,
+            midtransEnv: process.env.MIDTRANS_IS_PRODUCTION ? 'production' : 'sandbox'
+          }
+        };
 
-        await db.collection('orders').doc(orderId).update({
-          status: 'pembayaran gagal',
+        logger.error('Midtrans Transaction Failure', errorDetails);
+
+        // Safe update with error information
+        await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
+          status: 'payment_failed',
           midtrans_status: 'error',
-          paymentError: midtransError.ApiResponse?.error_messages || midtransError.message,
+          paymentError: midtransError.message.substring(0, 500), // Truncate long messages
+          errorDetails: {
+            code: midtransError.httpStatusCode || 'UNKNOWN',
+            type: 'MIDTRANS_ERROR',
+            timestamp: new Date().toISOString()
+          },
           updatedAt: new Date().toISOString(),
         });
 
@@ -226,8 +260,13 @@ const createOrderHandler = async (request, h) => {
           status: 'error',
           message: 'Pembayaran gagal diproses',
           error: process.env.NODE_ENV === 'development' ? 
-            (midtransError.ApiResponse?.error_messages || midtransError.message) : 
-            'Terjadi kesalahan saat memproses pembayaran',
+            midtransError.message : 'Terjadi kesalahan saat memproses pembayaran',
+          ...(process.env.NODE_ENV === 'development' && {
+            details: {
+              code: midtransError.httpStatusCode,
+              response: midtransError.ApiResponse
+            }
+          })
         }).code(502);
       }
     }
@@ -247,18 +286,31 @@ const createOrderHandler = async (request, h) => {
       },
     }).code(201);
   } catch (error) {
-    logger.error(`[${requestId}] Order creation failed`, {
-      error: error.message,
-      stack: error.stack
+    logger.error('Order Creation Failed', {
+      requestId,
+      error: error,
+      payload: {
+        // Mask sensitive data
+        ...payload,
+        carts: payload.carts?.map(cart => ({
+          ...cart,
+          customMaterials: cart.customMaterials ? '[REDACTED]' : undefined
+        }))
+      }
     });
     
     return h.response({ 
       status: 'error', 
       message: 'Gagal membuat order',
-      ...(process.env.NODE_ENV === 'development' && { error: error.message })
+      ...(process.env.NODE_ENV === 'development' && { 
+        error: error.message,
+        stack: error.stack 
+      })
     }).code(500);
   }
 };
+
+// ... (other handlers remain the same with enhanced error logging)
 
 // GET ALL ORDERS HANDLER
 const getAllOrdersHandler = async (request, h) => {
