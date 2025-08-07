@@ -294,23 +294,96 @@ const createOrderHandler = async (request, h) => {
             amount_value: parameter.transaction_details.gross_amount
           }
         });
+const transaction = await snap.createTransaction(parameter);
 
-        const transaction = await snap.createTransaction(parameter);
-        
-        logger.debug(`[${requestId}] Midtrans Response:`, {
-          transactionId: transaction?.transaction_id,
-          statusCode: transaction?.status_code,
-          paymentUrl: transaction?.redirect_url ? '[...]' : null,
-          fullResponse: transaction
-        });
+// Enhanced Transaction Debugging
+const debugTransaction = {
+  timestamp: new Date().toISOString(),
+  requestId,
+  request: {
+    endpoint: snap.apiConfig.coreApi + '/transactions',
+    method: 'POST',
+    payload: {
+      ...parameter,
+      transaction_details: {
+        order_id: parameter.transaction_details.order_id,
+        gross_amount: parameter.transaction_details.gross_amount,
+        amount_type: typeof parameter.transaction_details.gross_amount
+      },
+      // Mask sensitive data
+      customer_details: {
+        ...parameter.customer_details,
+        email: parameter.customer_details.email ? '[...]' : null,
+        phone: parameter.customer_details.phone ? '[...]' : null
+      }
+    }
+  },
+  response: {
+    status: 'received',
+    data: transaction ? {
+      transaction_id: transaction.transaction_id,
+      status_code: transaction.status_code,
+      payment_url: transaction.redirect_url ? '[...]' : null,
+      payment_type: transaction.payment_type,
+      // Additional important fields from Midtrans response
+      status_message: transaction.status_message,
+      currency: transaction.currency,
+      // Type checking
+      types: {
+        transaction_id: typeof transaction.transaction_id,
+        gross_amount: typeof transaction.gross_amount,
+        payment_url: typeof transaction.redirect_url
+      }
+    } : null,
+    raw_response: transaction // Be cautious with this in production
+  },
+  validation: {
+    has_transaction_id: !!transaction?.transaction_id,
+    has_payment_url: !!transaction?.redirect_url,
+    is_response_valid: transaction?.transaction_id && transaction?.redirect_url
+  }
+};
 
-        if (!transaction?.transaction_id || !transaction?.redirect_url) {
-          throw Object.assign(new Error('Invalid Midtrans response'), {
-            type: 'MIDTRANS_ERROR',
-            response: transaction
-          });
-        }
+logger.debug(`[${requestId}] Midtrans Transaction Debug:`, JSON.stringify(debugTransaction, null, 2));
 
+if (!transaction?.transaction_id || !transaction?.redirect_url) {
+  const error = new Error('Invalid Midtrans response');
+  error.type = 'MIDTRANS_ERROR';
+  error.details = {
+    missing_fields: [
+      ...(!transaction?.transaction_id ? ['transaction_id'] : []),
+      ...(!transaction?.redirect_url ? ['redirect_url'] : [])
+    ],
+    response_analysis: {
+      response_type: typeof transaction,
+      keys_present: transaction ? Object.keys(transaction) : 'null response',
+      status_code: transaction?.status_code,
+      status_message: transaction?.status_message
+    },
+    request_debug: {
+      gross_amount_sent: parameter.transaction_details.gross_amount,
+      amount_type: typeof parameter.transaction_details.gross_amount,
+      order_id: parameter.transaction_details.order_id
+    }
+  };
+  
+  // Include the full error context
+  logger.error(`[${requestId}] Midtrans Validation Failed:`, {
+    error: {
+      message: error.message,
+      type: error.type,
+      stack: error.stack
+    },
+    debug: error.details,
+    environment: {
+      node_env: process.env.NODE_ENV,
+      midtrans_env: snap.apiConfig.isProduction ? 'production' : 'sandbox',
+      sdk_version: midtransClient?.version
+    }
+  });
+
+  throw error;
+}
         await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
           paymentData: {
             transactionId: transaction.transaction_id,
