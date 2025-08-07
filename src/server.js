@@ -6,9 +6,11 @@ const buketRoutes = require('./routes/buketRoutes');
 const authRoutes = require('./routes/authRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const materialRoutes = require('./routes/materialRoutes');
-const orderRoutes = require('./routes/orderRoutes');
+// const orderRoutes = require('./routes/orderRoutes');
 const testRoutes = require('./routes/testRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
+// const paymentRoutes = require('./routes/paymentRoutes');
+
+const orderPaymentRoutes = require('./routes/orderPaymentRoutes');
 
 
 const init = async () => {
@@ -40,9 +42,8 @@ const init = async () => {
       ...authRoutes,
       ...cartRoutes,
       ...materialRoutes,
-      ...orderRoutes,
-      ...testRoutes,
-      ...paymentRoutes, // ✅ rute midtrans & payment digabung di sini
+      ...orderPaymentRoutes,
+      ...testRoutes // ✅ rute midtrans & payment digabung di sini
     ]);
 
     await server.start();
