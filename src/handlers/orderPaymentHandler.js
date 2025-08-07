@@ -6,6 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 // Enhanced logger with error tracking
 const midtransClient = require('midtrans-client');
 
+// Inisialisasi Snap
 const snap = new midtransClient.Snap({
   isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
   serverKey: process.env.MIDTRANS_SERVER_KEY,
@@ -17,10 +18,12 @@ const createOrderHandler = async (req, res) => {
     const { totalPrice, orderItems } = req.body;
     const userId = req.user._id;
 
+    // Validasi order items
     if (!orderItems || orderItems.length === 0) {
       return res.status(400).json({ message: 'Order items are required' });
     }
 
+    // Validasi harga
     if (!totalPrice || totalPrice <= 0) {
       return res.status(400).json({ message: 'Total price must be greater than zero' });
     }
@@ -32,26 +35,30 @@ const createOrderHandler = async (req, res) => {
     // Buat order ID unik
     const orderId = `ORDER-${Date.now()}-${userId.toString().substring(0, 8)}`;
 
-    // Payload Snap API
+    // Payload Snap API (semua metode pembayaran aktif)
     const parameter = {
       transaction_details: {
         order_id: orderId,
-        gross_amount: midtransAmount // harus integer positif
+        gross_amount: midtransAmount
       },
       customer_details: {
         first_name: `Customer-${userId.toString().substring(0, 8)}`,
         email: `${userId.toString().substring(0, 8)}@customer.com`,
         phone: '08123456789'
       }
+      // Kalau mau aktifkan metode tertentu saja, tambahkan:
+      // enabled_payments: ['bca_va', 'bni_va', 'gopay', 'shopeepay']
     };
 
-    // Request Snap
+    // Buat transaksi Snap
     const transaction = await snap.createTransaction(parameter);
 
+    // Validasi hasil
     if (!transaction || !transaction.token || !transaction.redirect_url) {
       throw new Error('Midtrans Snap did not return a valid transaction');
     }
 
+    // Kirim respons ke frontend
     res.status(200).json({
       message: 'Order created successfully',
       snapToken: transaction.token,
@@ -67,6 +74,9 @@ const createOrderHandler = async (req, res) => {
     });
   }
 };
+
+module.exports = { createOrderHandler };
+
 
 
 // GET ALL ORDERS HANDLER
