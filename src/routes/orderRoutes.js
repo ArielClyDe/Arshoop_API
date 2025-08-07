@@ -76,15 +76,4 @@ module.exports = [
       handler: paymentHandler.chargePaymentHandler,
     },
   },
-
-  // 🛎️ Midtrans: Notification Handler (webhook)
-  {
-    method: 'POST',
-    path: '/payments/notification',
-    options: {
-      tags: ['api'],
-      description: 'Notifikasi status pembayaran dari Midtrans',
-      handler: paymentHandler.handleMidtransNotification,
-    },
-  },
 ];
