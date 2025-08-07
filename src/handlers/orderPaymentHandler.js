@@ -80,55 +80,58 @@ const createOrderHandler = async (request, h) => {
   try {
     logger.info(`[${requestId}] Order creation started`);
 
+    // 1. Validate request payload exists
+    if (!request.payload) {
+      const error = new Error('Request payload is missing');
+      error.code = 'MISSING_PAYLOAD';
+      throw error;
+    }
+
     const payload = request.payload;
+
+    // 2. Input validation
     const validationErrors = validateOrderInput(payload);
-    
     if (validationErrors.length > 0) {
-      logger.warn(`[${requestId}] Validation failed`, { errors: validationErrors });
-      return h.response({
-        status: 'fail',
-        message: 'Data tidak valid',
-        errors: validationErrors
-      }).code(400);
+      const error = new Error('Order validation failed');
+      error.code = 'VALIDATION_ERROR';
+      error.details = validationErrors;
+      throw error;
     }
 
     const { userId, carts, alamat, ongkir, paymentMethod, deliveryMethod } = payload;
 
-    // Validasi cart items
+    // 3. Cart items validation
     const invalidCartItems = validateCartItems(carts);
     if (invalidCartItems.length > 0) {
-      logger.warn(`[${requestId}] Invalid cart items`, { count: invalidCartItems.length });
-      return h.response({
-        status: 'fail',
-        message: 'Item keranjang tidak valid',
-        errors: invalidCartItems.map(item => ({
-          cartId: item.cartId,
-          missingFields: [
-            ...(!item.buketId ? ['buketId'] : []),
-            ...(typeof item.quantity !== 'number' || item.quantity <= 0 ? ['quantity'] : []),
-            ...(typeof item.totalPrice !== 'number' || item.totalPrice <= 0 ? ['totalPrice'] : [])
-          ]
-        }))
-      }).code(400);
+      const error = new Error('Invalid cart items');
+      error.code = 'INVALID_CART_ITEMS';
+      error.details = invalidCartItems;
+      throw error;
     }
 
-    // Hitung total price dari cart items + ongkir (jika delivery)
-    const totalPrice = Math.round(carts.reduce((sum, cart) => sum + cart.totalPrice, 0) + 
-                      (deliveryMethod === 'delivery' ? Math.round(ongkir) : 0));
+    // 4. Calculate total price with safe rounding
+    const subtotal = carts.reduce((sum, cart) => {
+      const price = Number(cart.totalPrice) || 0;
+      if (isNaN(price)) {
+        throw new Error(`Invalid price for cart item ${cart.cartId}`);
+      }
+      return sum + price;
+    }, 0);
 
+    const shippingCost = deliveryMethod === 'delivery' ? Math.round(Number(ongkir) || 0) : 0;
+    const totalPrice = Math.round(subtotal + shippingCost);
+
+    // 5. Create order ID and prepare order data
     const orderId = `ORDER-${uuidv4()}`;
-    logger.debug(`[${requestId}] Generated order ID: ${orderId}`);
-
-    // Persiapkan data order
     const orderData = {
       orderId,
       userId,
       deliveryMethod,
       alamat: deliveryMethod === 'delivery' ? alamat : null,
-      ongkir: deliveryMethod === 'delivery' ? Math.round(ongkir) : 0,
+      ongkir: shippingCost,
       paymentMethod,
       totalPrice,
-      servicePrice: carts.reduce((sum, cart) => sum + (cart.servicePrice || 0), 0),
+      servicePrice: carts.reduce((sum, cart) => sum + (Number(cart.servicePrice) || 0), 0),
       carts: mapCartItems(carts),
       status: paymentMethod === 'cod' ? 'pending' : 'menunggu pembayaran',
       createdAt: new Date().toISOString(),
@@ -136,37 +139,29 @@ const createOrderHandler = async (request, h) => {
       updatedAt: new Date().toISOString(),
     };
 
-    // Simpan order ke Firestore
-    logger.debug(`[${requestId}] Saving order to Firestore`);
+    // 6. Save to Firestore
     await db.collection('orders').doc(orderId).set(orderData);
     logger.info(`[${requestId}] Order saved successfully`);
 
-    // Hapus cart items yang sudah diproses
+    // 7. Clean up carts (with error suppression)
     try {
-      logger.debug(`[${requestId}] Deleting processed cart items`);
       const cartIds = carts.map(c => c.cartId).filter(Boolean);
-      
       if (cartIds.length > 0) {
         const batch = db.batch();
-        cartIds.forEach(id => {
-          batch.delete(db.collection('carts').doc(id));
-        });
+        cartIds.forEach(id => batch.delete(db.collection('carts').doc(id)));
         await batch.commit();
-        logger.info(`[${requestId}] Deleted ${cartIds.length} cart items`);
       }
     } catch (cartError) {
-      logger.error(`[${requestId}] Failed to delete cart items`, cartError);
+      logger.warn(`[${requestId}] Cart cleanup failed`, { error: cartError.message });
     }
 
-    // Proses pembayaran untuk metode transfer
+    // 8. Process payment for transfer method
     if (paymentMethod === 'transfer') {
       try {
-        logger.debug(`[${requestId}] Creating Midtrans transaction`);
-        
         const parameter = {
           transaction_details: {
             order_id: orderId,
-            gross_amount: totalPrice, // Already rounded
+            gross_amount: totalPrice,
           },
           customer_details: {
             first_name: `Customer-${userId.substring(0, 8)}`,
@@ -174,36 +169,15 @@ const createOrderHandler = async (request, h) => {
             phone: '08123456789',
           },
           payment_type: 'bank_transfer',
-          bank_transfer: {
-            bank: 'bca',
-          },
+          bank_transfer: { bank: 'bca' },
         };
-
-        logger.debug(`[${requestId}] Midtrans request parameters`, { 
-          parameters: {
-            ...parameter,
-            customer_details: {
-              ...parameter.customer_details,
-              // Mask sensitive info in logs
-              email: parameter.customer_details.email.replace(/./g, '*'),
-              phone: parameter.customer_details.phone.replace(/\d(?=\d{4})/g, '*')
-            }
-          }
-        });
 
         const transaction = await snap.createTransaction(parameter);
         
-        // Validate Midtrans response
         if (!transaction?.transaction_id || !transaction?.redirect_url) {
-          throw new Error(`Invalid Midtrans response: ${JSON.stringify(transaction)}`);
+          throw new Error('Invalid Midtrans response: missing transaction data');
         }
 
-        logger.info(`[${requestId}] Midtrans transaction created`, { 
-          transactionId: transaction.transaction_id,
-          paymentUrl: transaction.redirect_url 
-        });
-
-        // Update order dengan data pembayaran
         await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
           paymentData: {
             transactionId: transaction.transaction_id,
@@ -222,59 +196,30 @@ const createOrderHandler = async (request, h) => {
             transactionId: transaction.transaction_id,
           },
         }).code(201);
+
       } catch (midtransError) {
-        // Enhanced error logging
         const errorDetails = {
-          requestId,
-          orderId,
-          errorType: 'Midtrans Transaction',
-          error: {
-            message: midtransError.message,
-            code: midtransError.httpStatusCode,
-            apiResponse: midtransError.ApiResponse,
-            rawRequest: midtransError.rawHttpClientData?.request,
-            rawResponse: midtransError.rawHttpClientData?.response
-          },
-          environment: {
-            nodeEnv: process.env.NODE_ENV,
-            midtransEnv: process.env.MIDTRANS_IS_PRODUCTION ? 'production' : 'sandbox'
-          }
+          code: midtransError.httpStatusCode || 'MIDTRANS_ERROR',
+          message: midtransError.message,
+          response: midtransError.ApiResponse
         };
 
-        logger.error('Midtrans Transaction Failure', errorDetails);
-
-        // Safe update with error information
         await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
           status: 'payment_failed',
           midtrans_status: 'error',
-          paymentError: midtransError.message.substring(0, 500), // Truncate long messages
-          errorDetails: {
-            code: midtransError.httpStatusCode || 'UNKNOWN',
-            type: 'MIDTRANS_ERROR',
-            timestamp: new Date().toISOString()
-          },
+          paymentError: errorDetails.message.substring(0, 200),
           updatedAt: new Date().toISOString(),
         });
 
         return h.response({
           status: 'error',
           message: 'Pembayaran gagal diproses',
-          error: process.env.NODE_ENV === 'development' ? 
-            midtransError.message : 'Terjadi kesalahan saat memproses pembayaran',
-          ...(process.env.NODE_ENV === 'development' && {
-            details: {
-              code: midtransError.httpStatusCode,
-              response: midtransError.ApiResponse
-            }
-          })
+          error: process.env.NODE_ENV === 'development' ? errorDetails : undefined,
         }).code(502);
       }
     }
 
-    logger.info(`[${requestId}] Order created successfully`, { 
-      responseTime: `${Date.now() - startTime}ms` 
-    });
-
+    // 9. Success response for COD orders
     return h.response({
       status: 'success',
       message: 'Order berhasil dibuat',
@@ -285,36 +230,40 @@ const createOrderHandler = async (request, h) => {
         })
       },
     }).code(201);
-  }  catch (error) {
-  // Safely handle payload logging
-  const safePayload = request.payload ? {
-    userId: request.payload.userId,
-    cartCount: request.payload.carts?.length || 0,
-    paymentMethod: request.payload.paymentMethod,
-    // Don't log sensitive or large data
-    hasCustomMaterials: request.payload.carts?.some(c => c.customMaterials) || false
-  } : null;
 
-  logger.error('Order Creation Failed', {
-    requestId,
-    error: {
-      message: error.message,
-      stack: error.stack,
-      type: error.constructor.name
-    },
-    payload: safePayload,
-    occurredAt: new Date().toISOString()
-  });
-  
-  return h.response({ 
-    status: 'error', 
-    message: 'Gagal membuat order',
-    ...(process.env.NODE_ENV === 'development' && { 
-      error: error.message,
-      stack: error.stack 
-    })
-  }).code(500);
-}
+  } catch (error) {
+    // Enhanced error handling
+    const errorResponse = {
+      status: 'error',
+      message: 'Gagal membuat order',
+      errorId: requestId,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (process.env.NODE_ENV === 'development') {
+      errorResponse.debug = {
+        message: error.message,
+        type: error.name,
+        code: error.code,
+        ...(error.details && { details: error.details })
+      };
+    }
+
+    logger.error(`[${requestId}] Order creation failed`, {
+      error: {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+      },
+      payloadSummary: request.payload ? {
+        userId: request.payload.userId,
+        itemCount: request.payload.carts?.length,
+        paymentMethod: request.payload.paymentMethod
+      } : null
+    });
+
+    return h.response(errorResponse).code(500);
+  }
 };
 
 // ... (other handlers remain the same with enhanced error logging)
