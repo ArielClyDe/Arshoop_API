@@ -80,9 +80,10 @@ const createOrderHandler = async (request, h) => {
   try {
     logger.info(`[${requestId}] Order creation started`);
 
-    // 1. Validate request payload exists
-    if (!request.payload) {
-      const error = new Error('Request payload is missing');
+    // 1. Validate request exists and has payload
+    if (!request || !request.payload) {
+      const error = new Error('Invalid request: missing payload');
+      error.type = 'INVALID_REQUEST';
       error.code = 'MISSING_PAYLOAD';
       throw error;
     }
@@ -93,35 +94,51 @@ const createOrderHandler = async (request, h) => {
     const validationErrors = validateOrderInput(payload);
     if (validationErrors.length > 0) {
       const error = new Error('Order validation failed');
-      error.code = 'VALIDATION_ERROR';
+      error.type = 'VALIDATION_ERROR';
       error.details = validationErrors;
       throw error;
     }
 
-    const { userId, carts, alamat, ongkir, paymentMethod, deliveryMethod } = payload;
+    // 3. Destructure with defaults
+    const { 
+      userId = null, 
+      carts = [], 
+      alamat = null, 
+      ongkir = 0, 
+      paymentMethod = null, 
+      deliveryMethod = null 
+    } = payload;
 
-    // 3. Cart items validation
-    const invalidCartItems = validateCartItems(carts);
-    if (invalidCartItems.length > 0) {
-      const error = new Error('Invalid cart items');
-      error.code = 'INVALID_CART_ITEMS';
-      error.details = invalidCartItems;
+    // 4. Validate required fields
+    if (!userId || !paymentMethod || !deliveryMethod) {
+      const error = new Error('Missing required fields');
+      error.type = 'MISSING_FIELDS';
+      error.missingFields = [];
+      if (!userId) error.missingFields.push('userId');
+      if (!paymentMethod) error.missingFields.push('paymentMethod');
+      if (!deliveryMethod) error.missingFields.push('deliveryMethod');
       throw error;
     }
 
-    // 4. Calculate total price with safe rounding
+    // 5. Cart items validation
+    const invalidCartItems = validateCartItems(carts);
+    if (invalidCartItems.length > 0) {
+      const error = new Error('Invalid cart items');
+      error.type = 'INVALID_CART_ITEMS';
+      error.invalidItems = invalidCartItems;
+      throw error;
+    }
+
+    // 6. Calculate total price with safe rounding
     const subtotal = carts.reduce((sum, cart) => {
       const price = Number(cart.totalPrice) || 0;
-      if (isNaN(price)) {
-        throw new Error(`Invalid price for cart item ${cart.cartId}`);
-      }
       return sum + price;
     }, 0);
 
     const shippingCost = deliveryMethod === 'delivery' ? Math.round(Number(ongkir) || 0) : 0;
     const totalPrice = Math.round(subtotal + shippingCost);
 
-    // 5. Create order ID and prepare order data
+    // 7. Create order data
     const orderId = `ORDER-${uuidv4()}`;
     const orderData = {
       orderId,
@@ -139,23 +156,11 @@ const createOrderHandler = async (request, h) => {
       updatedAt: new Date().toISOString(),
     };
 
-    // 6. Save to Firestore
+    // 8. Save to Firestore
     await db.collection('orders').doc(orderId).set(orderData);
-    logger.info(`[${requestId}] Order saved successfully`);
+    logger.info(`[${requestId}] Order saved successfully`, { orderId });
 
-    // 7. Clean up carts (with error suppression)
-    try {
-      const cartIds = carts.map(c => c.cartId).filter(Boolean);
-      if (cartIds.length > 0) {
-        const batch = db.batch();
-        cartIds.forEach(id => batch.delete(db.collection('carts').doc(id)));
-        await batch.commit();
-      }
-    } catch (cartError) {
-      logger.warn(`[${requestId}] Cart cleanup failed`, { error: cartError.message });
-    }
-
-    // 8. Process payment for transfer method
+    // 9. Process payment for transfer method
     if (paymentMethod === 'transfer') {
       try {
         const parameter = {
@@ -175,7 +180,10 @@ const createOrderHandler = async (request, h) => {
         const transaction = await snap.createTransaction(parameter);
         
         if (!transaction?.transaction_id || !transaction?.redirect_url) {
-          throw new Error('Invalid Midtrans response: missing transaction data');
+          throw Object.assign(new Error('Invalid Midtrans response'), {
+            type: 'MIDTRANS_ERROR',
+            response: transaction
+          });
         }
 
         await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
@@ -197,29 +205,37 @@ const createOrderHandler = async (request, h) => {
           },
         }).code(201);
 
-      } catch (midtransError) {
-        const errorDetails = {
-          code: midtransError.httpStatusCode || 'MIDTRANS_ERROR',
-          message: midtransError.message,
-          response: midtransError.ApiResponse
+      } catch (paymentError) {
+        // Normalize payment error
+        const normalizedError = {
+          message: paymentError.message,
+          stack: paymentError.stack,
+          type: paymentError.type || 'PAYMENT_ERROR',
+          code: paymentError.code || paymentError.httpStatusCode || 'UNKNOWN',
+          response: paymentError.ApiResponse || paymentError.response
         };
+
+        logger.error(`[${requestId}] Payment processing failed`, normalizedError);
 
         await safeFirestoreUpdate(db.collection('orders').doc(orderId), {
           status: 'payment_failed',
           midtrans_status: 'error',
-          paymentError: errorDetails.message.substring(0, 200),
+          paymentError: normalizedError.message.substring(0, 200),
           updatedAt: new Date().toISOString(),
         });
 
         return h.response({
           status: 'error',
           message: 'Pembayaran gagal diproses',
-          error: process.env.NODE_ENV === 'development' ? errorDetails : undefined,
+          ...(process.env.NODE_ENV === 'development' && {
+            error: normalizedError.message,
+            type: normalizedError.type
+          })
         }).code(502);
       }
     }
 
-    // 9. Success response for COD orders
+    // 10. Success response for non-transfer orders
     return h.response({
       status: 'success',
       message: 'Order berhasil dibuat',
@@ -232,29 +248,18 @@ const createOrderHandler = async (request, h) => {
     }).code(201);
 
   } catch (error) {
-    // Enhanced error handling
-    const errorResponse = {
-      status: 'error',
-      message: 'Gagal membuat order',
-      errorId: requestId,
-      timestamp: new Date().toISOString(),
+    // Normalize all unexpected errors
+    const normalizedError = {
+      message: error.message || 'Unknown error occurred during order creation',
+      stack: error.stack || new Error().stack,
+      type: error.type || 'UNKNOWN_ERROR',
+      code: error.code || 'UNKNOWN',
+      details: error.details || error.invalidItems || error.missingFields || null
     };
 
-    if (process.env.NODE_ENV === 'development') {
-      errorResponse.debug = {
-        message: error.message,
-        type: error.name,
-        code: error.code,
-        ...(error.details && { details: error.details })
-      };
-    }
-
+    // Enhanced error logging
     logger.error(`[${requestId}] Order creation failed`, {
-      error: {
-        message: error.message,
-        stack: error.stack,
-        code: error.code,
-      },
+      error: normalizedError,
       payloadSummary: request.payload ? {
         userId: request.payload.userId,
         itemCount: request.payload.carts?.length,
@@ -262,10 +267,18 @@ const createOrderHandler = async (request, h) => {
       } : null
     });
 
-    return h.response(errorResponse).code(500);
+    // Client response
+    return h.response({
+      status: 'error',
+      message: 'Gagal membuat order',
+      errorId: requestId,
+      ...(process.env.NODE_ENV === 'development' && {
+        error: normalizedError.message,
+        type: normalizedError.type
+      })
+    }).code(500);
   }
 };
-
 // ... (other handlers remain the same with enhanced error logging)
 
 // GET ALL ORDERS HANDLER
