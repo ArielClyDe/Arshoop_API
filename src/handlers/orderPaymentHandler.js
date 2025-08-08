@@ -1,111 +1,87 @@
-
-// functions/orders.js
+// functions/createOrder.js
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const midtransClient = require("midtrans-client");
 
 admin.initializeApp();
-const db = admin.firestore();
 
-// Konfigurasi Midtrans
+// Midtrans client
 const snap = new midtransClient.Snap({
-    isProduction: false, // true jika sudah live
-    serverKey: "MIDTRANS_SERVER_KEY",
+    isProduction: false, // Sandbox mode
+    serverKey: process.env.MIDTRANS_SERVER_KEY
 });
 
-exports.createOrder = functions.https.onCall(async (data, context) => {
+exports.createOrder = functions.https.onRequest(async (req, res) => {
     try {
-        if (!context.auth) {
-            throw new functions.https.HttpsError(
-                "unauthenticated",
-                "User belum login"
-            );
-        }
-
         const {
             userId,
             carts,
             alamat,
             ongkir,
-            paymentMethod,
+            paymentMethod, // "manual_transfer" atau "midtrans"
             totalPrice,
-            deliveryMethod,
-        } = data;
+            deliveryMethod // kurir atau ambil sendiri
+        } = req.body;
 
-        if (!carts || carts.length === 0) {
-            throw new functions.https.HttpsError(
-                "invalid-argument",
-                "Keranjang kosong"
-            );
+        if (!userId || !carts || carts.length === 0) {
+            return res.status(400).json({ error: "Data pesanan tidak lengkap" });
         }
 
-        // Buat ID order unik
-        const orderId = `ORDER-${Date.now()}`;
-
-        // Data order
-        const orderData = {
-            orderId,
+        // Simpan ke Firestore dulu
+        const orderRef = await admin.firestore().collection("orders").add({
             userId,
             carts,
             alamat,
             ongkir,
-            totalPrice,
             paymentMethod,
+            totalPrice,
             deliveryMethod,
-            status: paymentMethod === "midtrans" ? "pending" : "waiting_payment",
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-
-        let midtransToken = null;
-        let midtransRedirectUrl = null;
-
-        if (paymentMethod === "midtrans") {
-            // Request ke Midtrans
-            const midtransParams = {
-                transaction_details: {
-                    order_id: orderId,
-                    gross_amount: totalPrice,
-                },
-                customer_details: {
-                    first_name: "User",
-                    email: "user@example.com", // bisa ambil dari profile Firebase
-                    phone: "08123456789",
-                    shipping_address: {
-                        address: alamat,
-                    },
-                },
-                item_details: carts.map(item => ({
-                    id: item.buketId,
-                    price: item.basePrice,
-                    quantity: item.quantity,
-                    name: item.name,
-                })),
-            };
-
-            const transaction = await snap.createTransaction(midtransParams);
-            midtransToken = transaction.token;
-            midtransRedirectUrl = transaction.redirect_url;
-        }
-
-        // Simpan ke Firestore
-        await db.collection("orders").doc(orderId).set({
-            ...orderData,
-            midtransToken,
-            midtransRedirectUrl,
+            status: paymentMethod === "manual_transfer" ? "waiting_payment" : "pending",
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        return {
-            success: true,
+        let paymentData = null;
+
+        if (paymentMethod === "midtrans") {
+            // Buat transaksi Midtrans Snap
+            const parameter = {
+                transaction_details: {
+                    order_id: orderRef.id,
+                    gross_amount: totalPrice
+                },
+                customer_details: {
+                    user_id: userId,
+                    address: alamat
+                }
+            };
+
+            const transaction = await snap.createTransaction(parameter);
+            paymentData = {
+                snapToken: transaction.token,
+                snapRedirectUrl: transaction.redirect_url
+            };
+        } else {
+            // Manual transfer — tidak perlu Snap Token
+            paymentData = {
+                bankName: "BCA",
+                accountNumber: "1234567890",
+                accountName: "PT Arshoop"
+            };
+        }
+
+        return res.status(200).json({
             message: "Order berhasil dibuat",
-            orderId,
-            midtransToken,
-            midtransRedirectUrl,
-        };
+            orderId: orderRef.id,
+            paymentMethod,
+            paymentData
+        });
+
     } catch (error) {
         console.error("Error createOrder:", error);
-        throw new functions.https.HttpsError("internal", error.message);
+        res.status(500).json({ error: error.message });
     }
 });
+
 
 // GET ALL ORDERS
 const getAllOrdersHandler = async (request, h) => {
