@@ -23,7 +23,7 @@ const createOrderHandler = async (request, h) => {
             alamat,
             ongkir = 0,
             paymentMethod,
-            totalPrice, // ini nggak lagi jadi patokan gross_amount
+            totalPrice,
             deliveryMethod,
             customer
         } = request.payload;
@@ -35,7 +35,7 @@ const createOrderHandler = async (request, h) => {
         // Buat Order ID unik
         const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-        // Hitung item_details yang sudah include custom material
+        // Hitung item_details
         const itemDetails = carts.map(item => {
             const customMaterialTotal = item.customMaterials?.reduce((sum, m) =>
                 sum + (m.price * m.quantity), 0
@@ -49,7 +49,7 @@ const createOrderHandler = async (request, h) => {
             };
         });
 
-        // Tambahkan ongkir
+        // Tambah ongkir
         if (ongkir) {
             itemDetails.push({
                 id: "ONGKIR",
@@ -59,7 +59,7 @@ const createOrderHandler = async (request, h) => {
             });
         }
 
-        // Hitung gross_amount langsung dari item_details
+        // Hitung total
         const grossAmount = itemDetails.reduce((sum, item) =>
             sum + (item.price * item.quantity), 0
         );
@@ -70,7 +70,7 @@ const createOrderHandler = async (request, h) => {
             carts,
             alamat,
             ongkir,
-            totalPrice: grossAmount, // simpan hasil hitungan beneran
+            totalPrice: grossAmount,
             paymentMethod,
             deliveryMethod,
             status: paymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
@@ -80,12 +80,11 @@ const createOrderHandler = async (request, h) => {
         let midtransToken = null;
         let midtransRedirectUrl = null;
 
-        // Jika pembayaran Midtrans
         if (paymentMethod === 'midtrans') {
             const midtransParams = {
                 transaction_details: {
                     order_id: orderId,
-                    gross_amount: grossAmount, // aman, sama dengan total item_details
+                    gross_amount: grossAmount,
                 },
                 customer_details: {
                     first_name: customer?.name || "User",
@@ -99,9 +98,19 @@ const createOrderHandler = async (request, h) => {
             const transaction = await snap.createTransaction(midtransParams);
             midtransToken = transaction.token;
             midtransRedirectUrl = transaction.redirect_url;
+
+            // ===== AUTO SETTLEMENT JIKA SANDBOX =====
+            if (!snap.apiConfig.isProduction) {
+                try {
+                    await core.transaction.approve(orderId);
+                    console.log(`SANDBOX: Order ${orderId} langsung di-approve sebagai paid`);
+                } catch (err) {
+                    console.error("Gagal auto-approve sandbox:", err.message);
+                }
+            }
         }
 
-        // Simpan order ke Firestore
+        // Simpan order
         await db.collection('orders').doc(orderId).set({
             ...orderData,
             midtransToken,
@@ -119,6 +128,7 @@ const createOrderHandler = async (request, h) => {
         return h.response({ status: 'fail', message: error.message }).code(500);
     }
 };
+
 
 
 // ======== NOTIFIKASI MIDTRANS ========
