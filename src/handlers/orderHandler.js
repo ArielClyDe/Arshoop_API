@@ -3,7 +3,7 @@ const midtransClient = require('midtrans-client');
 
 // Midtrans Snap Client
 const snap = new midtransClient.Snap({
-    isProduction: false, // true jika live
+    isProduction: false,
     serverKey: process.env.MIDTRANS_SERVER_KEY || "",
 });
 
@@ -13,7 +13,6 @@ const core = new midtransClient.CoreApi({
     clientKey: process.env.MIDTRANS_CLIENT_KEY || "",
 });
 
-// ======== BUAT ORDER ========
 // ======== BUAT ORDER ========
 const createOrderHandler = async (request, h) => {
     try {
@@ -73,7 +72,9 @@ const createOrderHandler = async (request, h) => {
             totalPrice: grossAmount,
             paymentMethod,
             deliveryMethod,
-            status: paymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
+            // status awal untuk pengerjaan
+            status: 'pending', // pending menunggu validasi admin
+            paymentStatus: paymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
             createdAt: new Date().toISOString(),
         };
 
@@ -99,11 +100,12 @@ const createOrderHandler = async (request, h) => {
             midtransToken = transaction.token;
             midtransRedirectUrl = transaction.redirect_url;
 
-            // ===== AUTO SETTLEMENT JIKA SANDBOX =====
+            // AUTO SETTLEMENT SANDBOX
             if (!snap.apiConfig.isProduction) {
                 try {
                     await core.transaction.approve(orderId);
                     console.log(`SANDBOX: Order ${orderId} langsung di-approve sebagai paid`);
+                    orderData.paymentStatus = 'paid';
                 } catch (err) {
                     console.error("Gagal auto-approve sandbox:", err.message);
                 }
@@ -129,8 +131,6 @@ const createOrderHandler = async (request, h) => {
     }
 };
 
-
-
 // ======== NOTIFIKASI MIDTRANS ========
 const midtransNotificationHandler = async (request, h) => {
     try {
@@ -141,22 +141,22 @@ const midtransNotificationHandler = async (request, h) => {
         const transactionStatus = statusResponse.transaction_status;
         const fraudStatus = statusResponse.fraud_status;
 
-        let newStatus = 'pending';
+        let paymentStatus = 'pending';
 
         if (transactionStatus === 'capture') {
-            newStatus = fraudStatus === 'accept' ? 'paid' : 'challenge';
+            paymentStatus = fraudStatus === 'accept' ? 'paid' : 'challenge';
         } else if (transactionStatus === 'settlement') {
-            newStatus = 'paid';
+            paymentStatus = 'paid';
         } else if (transactionStatus === 'pending') {
-            newStatus = 'pending';
+            paymentStatus = 'pending';
         } else if (['deny', 'cancel', 'expire'].includes(transactionStatus)) {
-            newStatus = 'failed';
+            paymentStatus = 'failed';
         } else if (transactionStatus === 'refund') {
-            newStatus = 'refunded';
+            paymentStatus = 'refunded';
         }
 
         await db.collection('orders').doc(orderId).update({
-            status: newStatus,
+            paymentStatus,
             updatedAt: new Date().toISOString(),
             midtransStatus: statusResponse
         });
@@ -169,7 +169,33 @@ const midtransNotificationHandler = async (request, h) => {
     }
 };
 
+// ======== ADMIN UPDATE STATUS PESANAN ========
+const updateOrderStatusHandler = async (request, h) => {
+    try {
+        const { orderId, status } = request.payload;
+
+        const allowedStatuses = ["pending", "processing", "done", "shipping", "delivered"];
+        if (!allowedStatuses.includes(status)) {
+            return h.response({ status: "fail", message: "Status tidak valid" }).code(400);
+        }
+
+        await db.collection('orders').doc(orderId).update({
+            status,
+            updatedAt: new Date().toISOString()
+        });
+
+        return h.response({
+            status: "success",
+            message: `Status order ${orderId} diperbarui menjadi ${status}`
+        }).code(200);
+    } catch (error) {
+        console.error("Error updateOrderStatusHandler:", error);
+        return h.response({ status: "fail", message: error.message }).code(500);
+    }
+};
+
 module.exports = {
     createOrderHandler,
-    midtransNotificationHandler
+    midtransNotificationHandler,
+    updateOrderStatusHandler
 };
