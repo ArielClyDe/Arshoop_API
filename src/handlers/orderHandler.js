@@ -14,6 +14,7 @@ const core = new midtransClient.CoreApi({
 });
 
 // ======== BUAT ORDER ========
+// ======== BUAT ORDER ========
 const createOrderHandler = async (request, h) => {
     try {
         const {
@@ -22,7 +23,7 @@ const createOrderHandler = async (request, h) => {
             alamat,
             ongkir = 0,
             paymentMethod,
-            totalPrice,
+            totalPrice, // ini nggak lagi jadi patokan gross_amount
             deliveryMethod,
             customer
         } = request.payload;
@@ -34,13 +35,42 @@ const createOrderHandler = async (request, h) => {
         // Buat Order ID unik
         const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
+        // Hitung item_details yang sudah include custom material
+        const itemDetails = carts.map(item => {
+            const customMaterialTotal = item.customMaterials?.reduce((sum, m) =>
+                sum + (m.price * m.quantity), 0
+            ) || 0;
+
+            return {
+                id: item.buketId,
+                price: item.basePrice + customMaterialTotal,
+                quantity: item.quantity,
+                name: item.name
+            };
+        });
+
+        // Tambahkan ongkir
+        if (ongkir) {
+            itemDetails.push({
+                id: "ONGKIR",
+                price: ongkir,
+                quantity: 1,
+                name: "Ongkos Kirim"
+            });
+        }
+
+        // Hitung gross_amount langsung dari item_details
+        const grossAmount = itemDetails.reduce((sum, item) =>
+            sum + (item.price * item.quantity), 0
+        );
+
         const orderData = {
             orderId,
             userId,
             carts,
             alamat,
             ongkir,
-            totalPrice,
+            totalPrice: grossAmount, // simpan hasil hitungan beneran
             paymentMethod,
             deliveryMethod,
             status: paymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
@@ -55,30 +85,15 @@ const createOrderHandler = async (request, h) => {
             const midtransParams = {
                 transaction_details: {
                     order_id: orderId,
-                    gross_amount: totalPrice,
+                    gross_amount: grossAmount, // aman, sama dengan total item_details
                 },
                 customer_details: {
                     first_name: customer?.name || "User",
                     email: customer?.email || "user@example.com",
                     phone: customer?.phone || "",
-                    shipping_address: {
-                        address: alamat,
-                    },
+                    shipping_address: { address: alamat },
                 },
-                item_details: [
-                    ...carts.map(item => ({
-                        id: item.buketId,
-                        price: item.basePrice,
-                        quantity: item.quantity,
-                        name: item.name,
-                    })),
-                    ...(ongkir ? [{
-                        id: "ONGKIR",
-                        price: ongkir,
-                        quantity: 1,
-                        name: "Ongkos Kirim"
-                    }] : [])
-                ]
+                item_details: itemDetails
             };
 
             const transaction = await snap.createTransaction(midtransParams);
@@ -104,6 +119,7 @@ const createOrderHandler = async (request, h) => {
         return h.response({ status: 'fail', message: error.message }).code(500);
     }
 };
+
 
 // ======== NOTIFIKASI MIDTRANS ========
 const midtransNotificationHandler = async (request, h) => {
