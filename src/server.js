@@ -42,7 +42,7 @@ const init = async () => {
       ...authRoutes,
       ...cartRoutes,
       ...materialRoutes,
-      ...orderPaymentRoutes,
+      ...orderRoutes,
       ...testRoutes // ✅ rute midtrans & payment digabung di sini
     ]);
 
