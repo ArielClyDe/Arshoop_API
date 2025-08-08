@@ -1,4 +1,4 @@
-const { createOrderHandler, midtransNotificationHandler } = require('./handlers/orderHandler');
+const { createOrderHandler, midtransNotificationHandler } = require('../handlers/orderHandler');
 
 server.route([
     {
