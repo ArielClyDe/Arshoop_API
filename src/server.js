@@ -6,11 +6,10 @@ const buketRoutes = require('./routes/buketRoutes');
 const authRoutes = require('./routes/authRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const materialRoutes = require('./routes/materialRoutes');
-// const orderRoutes = require('./routes/orderRoutes');
+const orderRoutes = require('./routes/orderRoutes');
 const testRoutes = require('./routes/testRoutes');
-// const paymentRoutes = require('./routes/paymentRoutes');
 
-const orderPaymentRoutes = require('./routes/orderPaymentRoutes');
+
 
 
 const init = async () => {
