@@ -10,8 +10,7 @@ const snap = new midtransClient.Snap({
   clientKey: process.env.MIDTRANS_CLIENT_KEY
 });
 
-// CREATE ORDER
-// CREATE ORDER - versi Firebase tanpa request.auth.credentials
+// CREATE ORDER// CREATE ORDER - support COD & MIDTRANS
 const createOrderHandler = async (request, h) => {
   try {
     const { userId, totalPrice, orderItems, paymentMethod } = request.payload;
@@ -26,56 +25,77 @@ const createOrderHandler = async (request, h) => {
       return h.response({ message: 'Total price must be greater than zero' }).code(400);
     }
 
-    // Hitung total termasuk ongkir
     const shippingCost = 10000;
-    const midtransAmount = Math.round(Number(totalPrice) + shippingCost);
-
     const orderId = `ORDER-${Date.now()}-${userId.substring(0, 8)}`;
 
-    // Midtrans parameter
-    const parameter = {
-      transaction_details: {
-        order_id: orderId,
-        gross_amount: midtransAmount
-      },
-      customer_details: {
-        first_name: `Customer-${userId.substring(0, 8)}`,
-        email: `${userId.substring(0, 8)}@customer.com`,
-        phone: '08123456789'
+    // Kalau transfer via Midtrans
+    if (paymentMethod === 'transfer') {
+      const midtransAmount = Math.round(Number(totalPrice) + shippingCost);
+      const parameter = {
+        transaction_details: {
+          order_id: orderId,
+          gross_amount: midtransAmount
+        },
+        customer_details: {
+          first_name: `Customer-${userId.substring(0, 8)}`,
+          email: `${userId.substring(0, 8)}@customer.com`,
+          phone: '08123456789'
+        }
+      };
+
+      const transaction = await snap.createTransaction(parameter);
+
+      if (!transaction?.token || !transaction?.redirect_url) {
+        throw new Error('Midtrans Snap did not return a valid transaction');
       }
-    };
 
-    // Buat transaksi Midtrans
-    const transaction = await snap.createTransaction(parameter);
+      await db.collection('orders').doc(orderId).set({
+        userId,
+        orderItems,
+        totalPrice,
+        shippingCost,
+        paymentMethod,
+        snapToken: transaction.token,
+        redirectUrl: transaction.redirect_url,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      });
 
-    if (!transaction?.token || !transaction?.redirect_url) {
-      throw new Error('Midtrans Snap did not return a valid transaction');
+      return h.response({
+        message: 'Order created successfully (Midtrans)',
+        snapToken: transaction.token,
+        redirectUrl: transaction.redirect_url,
+        orderId
+      }).code(200);
     }
 
-    // Simpan order ke Firestore
-    await db.collection('orders').doc(orderId).set({
-      userId,
-      orderItems,
-      totalPrice,
-      shippingCost,
-      paymentMethod: paymentMethod || 'transfer',
-      snapToken: transaction.token,
-      redirectUrl: transaction.redirect_url,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    });
+    // Kalau COD
+    else if (paymentMethod === 'cod') {
+      await db.collection('orders').doc(orderId).set({
+        userId,
+        orderItems,
+        totalPrice,
+        shippingCost,
+        paymentMethod,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      });
 
-    return h.response({
-      message: 'Order created successfully',
-      snapToken: transaction.token,
-      redirectUrl: transaction.redirect_url,
-      orderId
-    }).code(200);
+      return h.response({
+        message: 'Order created successfully (COD)',
+        orderId
+      }).code(200);
+    }
+
+    // Kalau paymentMethod tidak valid
+    else {
+      return h.response({ message: 'Invalid payment method' }).code(400);
+    }
 
   } catch (error) {
-    console.error('Midtrans API Error:', error.ApiResponse || error.message);
+    console.error('Order API Error:', error.ApiResponse || error.message);
     return h.response({
-      message: 'Midtrans Validation Failed',
+      message: 'Order creation failed',
       error: error.ApiResponse || error.message || 'Unknown error'
     }).code(500);
   }
