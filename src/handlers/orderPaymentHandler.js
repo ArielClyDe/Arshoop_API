@@ -11,11 +11,14 @@ const snap = new midtransClient.Snap({
 });
 
 // CREATE ORDER
+// CREATE ORDER - versi Firebase tanpa request.auth.credentials
 const createOrderHandler = async (request, h) => {
   try {
-    const { totalPrice, orderItems } = request.payload;
-    const { userId } = request.auth.credentials;
+    const { userId, totalPrice, orderItems, paymentMethod } = request.payload;
 
+    if (!userId) {
+      return h.response({ message: 'User ID is required' }).code(400);
+    }
     if (!orderItems || orderItems.length === 0) {
       return h.response({ message: 'Order items are required' }).code(400);
     }
@@ -23,10 +26,13 @@ const createOrderHandler = async (request, h) => {
       return h.response({ message: 'Total price must be greater than zero' }).code(400);
     }
 
+    // Hitung total termasuk ongkir
     const shippingCost = 10000;
     const midtransAmount = Math.round(Number(totalPrice) + shippingCost);
+
     const orderId = `ORDER-${Date.now()}-${userId.substring(0, 8)}`;
 
+    // Midtrans parameter
     const parameter = {
       transaction_details: {
         order_id: orderId,
@@ -39,11 +45,25 @@ const createOrderHandler = async (request, h) => {
       }
     };
 
+    // Buat transaksi Midtrans
     const transaction = await snap.createTransaction(parameter);
 
     if (!transaction?.token || !transaction?.redirect_url) {
       throw new Error('Midtrans Snap did not return a valid transaction');
     }
+
+    // Simpan order ke Firestore
+    await db.collection('orders').doc(orderId).set({
+      userId,
+      orderItems,
+      totalPrice,
+      shippingCost,
+      paymentMethod: paymentMethod || 'transfer',
+      snapToken: transaction.token,
+      redirectUrl: transaction.redirect_url,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    });
 
     return h.response({
       message: 'Order created successfully',
@@ -60,6 +80,7 @@ const createOrderHandler = async (request, h) => {
     }).code(500);
   }
 };
+
 
 // GET ALL ORDERS
 const getAllOrdersHandler = async (request, h) => {
