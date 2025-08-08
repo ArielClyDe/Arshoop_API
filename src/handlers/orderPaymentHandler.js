@@ -1,105 +1,112 @@
-// src/handlers/orderPaymentHandler.js
-const midtransClient = require('midtrans-client');
-const { db } = require('../services/firebaseService');
-const { v4: uuidv4 } = require('uuid');
 
-// Inisialisasi Snap
+// functions/orders.js
+const functions = require("firebase-functions");
+const admin = require("firebase-admin");
+const midtransClient = require("midtrans-client");
+
+admin.initializeApp();
+const db = admin.firestore();
+
+// Konfigurasi Midtrans
 const snap = new midtransClient.Snap({
-  isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
-  serverKey: process.env.MIDTRANS_SERVER_KEY,
-  clientKey: process.env.MIDTRANS_CLIENT_KEY
+    isProduction: false, // true jika sudah live
+    serverKey: "MIDTRANS_SERVER_KEY",
 });
 
-// CREATE ORDER// CREATE ORDER - support COD & MIDTRANS
-const createOrderHandler = async (request, h) => {
-  try {
-    const { userId, totalPrice, orderItems, paymentMethod } = request.payload;
-
-    if (!userId) {
-      return h.response({ message: 'User ID is required' }).code(400);
-    }
-    if (!orderItems || orderItems.length === 0) {
-      return h.response({ message: 'Order items are required' }).code(400);
-    }
-    if (!totalPrice || totalPrice <= 0) {
-      return h.response({ message: 'Total price must be greater than zero' }).code(400);
-    }
-
-    const shippingCost = 10000;
-    const orderId = `ORDER-${Date.now()}-${userId.substring(0, 8)}`;
-
-    // Kalau transfer via Midtrans
-    if (paymentMethod === 'transfer') {
-      const midtransAmount = Math.round(Number(totalPrice) + shippingCost);
-      const parameter = {
-        transaction_details: {
-          order_id: orderId,
-          gross_amount: midtransAmount
-        },
-        customer_details: {
-          first_name: `Customer-${userId.substring(0, 8)}`,
-          email: `${userId.substring(0, 8)}@customer.com`,
-          phone: '08123456789'
+exports.createOrder = functions.https.onCall(async (data, context) => {
+    try {
+        if (!context.auth) {
+            throw new functions.https.HttpsError(
+                "unauthenticated",
+                "User belum login"
+            );
         }
-      };
 
-      const transaction = await snap.createTransaction(parameter);
+        const {
+            userId,
+            carts,
+            alamat,
+            ongkir,
+            paymentMethod,
+            totalPrice,
+            deliveryMethod,
+        } = data;
 
-      if (!transaction?.token || !transaction?.redirect_url) {
-        throw new Error('Midtrans Snap did not return a valid transaction');
-      }
+        if (!carts || carts.length === 0) {
+            throw new functions.https.HttpsError(
+                "invalid-argument",
+                "Keranjang kosong"
+            );
+        }
 
-      await db.collection('orders').doc(orderId).set({
-        userId,
-        orderItems,
-        totalPrice,
-        shippingCost,
-        paymentMethod,
-        snapToken: transaction.token,
-        redirectUrl: transaction.redirect_url,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
+        // Buat ID order unik
+        const orderId = `ORDER-${Date.now()}`;
 
-      return h.response({
-        message: 'Order created successfully (Midtrans)',
-        snapToken: transaction.token,
-        redirectUrl: transaction.redirect_url,
-        orderId
-      }).code(200);
+        // Data order
+        const orderData = {
+            orderId,
+            userId,
+            carts,
+            alamat,
+            ongkir,
+            totalPrice,
+            paymentMethod,
+            deliveryMethod,
+            status: paymentMethod === "midtrans" ? "pending" : "waiting_payment",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        let midtransToken = null;
+        let midtransRedirectUrl = null;
+
+        if (paymentMethod === "midtrans") {
+            // Request ke Midtrans
+            const midtransParams = {
+                transaction_details: {
+                    order_id: orderId,
+                    gross_amount: totalPrice,
+                },
+                customer_details: {
+                    first_name: "User",
+                    email: "user@example.com", // bisa ambil dari profile Firebase
+                    phone: "08123456789",
+                    shipping_address: {
+                        address: alamat,
+                    },
+                },
+                item_details: carts.map(item => ({
+                    id: item.buketId,
+                    price: item.basePrice,
+                    quantity: item.quantity,
+                    name: item.name,
+                })),
+            };
+
+            const transaction = await snap.createTransaction(midtransParams);
+            midtransToken = transaction.token;
+            midtransRedirectUrl = transaction.redirect_url;
+        }
+
+        // Simpan ke Firestore
+        await db.collection("orders").doc(orderId).set({
+            ...orderData,
+            midtransToken,
+            midtransRedirectUrl,
+        });
+
+        return {
+            success: true,
+            message: "Order berhasil dibuat",
+            orderId,
+            midtransToken,
+            midtransRedirectUrl,
+        };
+    } catch (error) {
+        console.error("Error createOrder:", error);
+        throw new functions.https.HttpsError("internal", error.message);
     }
+});
 
-    // Kalau COD
-    else if (paymentMethod === 'cod') {
-      await db.collection('orders').doc(orderId).set({
-        userId,
-        orderItems,
-        totalPrice,
-        shippingCost,
-        paymentMethod,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
-
-      return h.response({
-        message: 'Order created successfully (COD)',
-        orderId
-      }).code(200);
-    }
-
-    // Kalau paymentMethod tidak valid
-    else {
-      return h.response({ message: 'Invalid payment method' }).code(400);
-    }
-
-  } catch (error) {
-    console.error('Order API Error:', error.ApiResponse || error.message);
-    return h.response({
-      message: 'Order creation failed',
-      error: error.ApiResponse || error.message || 'Unknown error'
-    }).code(500);
-  }
-};
 
 
 // GET ALL ORDERS
