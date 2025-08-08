@@ -1,6 +1,7 @@
+// orderRoutes.js
 const { createOrderHandler, midtransNotificationHandler } = require('../handlers/orderHandler');
 
-server.route([
+module.exports = [
     {
         method: 'POST',
         path: '/orders',
@@ -11,4 +12,4 @@ server.route([
         path: '/midtrans/notification',
         handler: midtransNotificationHandler
     }
-]);
+];

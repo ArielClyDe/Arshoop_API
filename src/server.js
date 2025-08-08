@@ -26,24 +26,23 @@ const init = async () => {
       },
     });
 
-    server.route({
-      method: 'GET',
-      path: '/',
-      handler: (request, h) => {
-        return {
-          message: 'API Buket ARSHOOP aktif 🚀',
-        };
-      },
-    });
-
     server.route([
-      ...buketRoutes,
-      ...authRoutes,
-      ...cartRoutes,
-      ...materialRoutes,
-      ...orderRoutes,
-      ...testRoutes // ✅ rute midtrans & payment digabung di sini
-    ]);
+  {
+    method: 'GET',
+    path: '/',
+    handler: (request, h) => {
+      return {
+        message: 'API Buket ARSHOOP aktif 🚀',
+      };
+    },
+  },
+  ...buketRoutes,
+  ...authRoutes,
+  ...cartRoutes,
+  ...materialRoutes,
+  ...orderRoutes,
+  ...testRoutes
+]);
 
     await server.start();
     console.log(`✅ Server running at: ${server.info.uri}`);
