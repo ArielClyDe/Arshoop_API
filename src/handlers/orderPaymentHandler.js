@@ -18,7 +18,7 @@ exports.createOrder = functions.https.onRequest(async (req, res) => {
             carts,
             alamat,
             ongkir,
-            paymentMethod, // "manual_transfer" atau "midtrans"
+            paymentMethod, // "cod" atau "midtrans"
             totalPrice,
             deliveryMethod // kurir atau ambil sendiri
         } = req.body;
@@ -27,7 +27,7 @@ exports.createOrder = functions.https.onRequest(async (req, res) => {
             return res.status(400).json({ error: "Data pesanan tidak lengkap" });
         }
 
-        // Simpan ke Firestore dulu
+        // Simpan order awal ke Firestore
         const orderRef = await admin.firestore().collection("orders").add({
             userId,
             carts,
@@ -36,7 +36,7 @@ exports.createOrder = functions.https.onRequest(async (req, res) => {
             paymentMethod,
             totalPrice,
             deliveryMethod,
-            status: paymentMethod === "manual_transfer" ? "waiting_payment" : "pending",
+            status: paymentMethod === "cod" ? "waiting_confirmation" : "pending",
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
@@ -61,11 +61,9 @@ exports.createOrder = functions.https.onRequest(async (req, res) => {
                 snapRedirectUrl: transaction.redirect_url
             };
         } else {
-            // Manual transfer — tidak perlu Snap Token
+            // COD — tidak perlu Snap Token
             paymentData = {
-                bankName: "BCA",
-                accountNumber: "1234567890",
-                accountName: "PT Arshoop"
+                note: "Bayar di tempat saat pesanan tiba"
             };
         }
 
@@ -81,6 +79,7 @@ exports.createOrder = functions.https.onRequest(async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 
 // GET ALL ORDERS
