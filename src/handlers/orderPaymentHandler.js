@@ -107,8 +107,6 @@ exports.createOrder = functions.https.onCall(async (data, context) => {
     }
 });
 
-
-
 // GET ALL ORDERS
 const getAllOrdersHandler = async (request, h) => {
   try {
