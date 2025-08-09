@@ -132,41 +132,67 @@ const createOrderHandler = async (request, h) => {
 };
 
 // ======== NOTIFIKASI MIDTRANS ========
-const midtransNotificationHandler = async (request, h) => {
-    try {
-        const notification = request.payload;
-        const statusResponse = await core.transaction.notification(notification);
+// midtransNotificationHandler.js
+const midtransClient = require('midtrans-client');
+const admin = require('firebase-admin');
 
-        const orderId = statusResponse.order_id;
-        const transactionStatus = statusResponse.transaction_status;
-        const fraudStatus = statusResponse.fraud_status;
+const midtransNotificationHandler = async (req, res) => {
+  try {
+    console.log("==== Midtrans Notification Diterima ====");
+    console.log("Headers:", req.headers);
+    console.log("Body:", JSON.stringify(req.body, null, 2));
 
-        let paymentStatus = 'pending';
+    const notificationJson = req.body;
 
-        if (transactionStatus === 'capture') {
-            paymentStatus = fraudStatus === 'accept' ? 'paid' : 'challenge';
-        } else if (transactionStatus === 'settlement') {
-            paymentStatus = 'paid';
-        } else if (transactionStatus === 'pending') {
-            paymentStatus = 'pending';
-        } else if (['deny', 'cancel', 'expire'].includes(transactionStatus)) {
-            paymentStatus = 'failed';
-        } else if (transactionStatus === 'refund') {
-            paymentStatus = 'refunded';
-        }
+    const core = new midtransClient.CoreApi({
+      isProduction: false, // sandbox
+      serverKey: process.env.MIDTRANS_SERVER_KEY,
+      clientKey: process.env.MIDTRANS_CLIENT_KEY
+    });
 
-        await db.collection('orders').doc(orderId).update({
-            paymentStatus,
-            updatedAt: new Date().toISOString(),
-            midtransStatus: statusResponse
-        });
+    // Ambil status dari Midtrans
+    const statusResponse = await core.transaction.notification(notificationJson);
 
-        return h.response({ success: true, message: 'Notifikasi diproses' }).code(200);
+    console.log("==== Status Response dari Midtrans ====");
+    console.log(JSON.stringify(statusResponse, null, 2));
 
-    } catch (error) {
-        console.error('Error midtransNotificationHandler:', error);
-        return h.response({ success: false, message: error.message }).code(500);
+    const orderId = statusResponse.order_id;
+    const transactionStatus = statusResponse.transaction_status;
+    const fraudStatus = statusResponse.fraud_status;
+
+    console.log(`OrderID: ${orderId}`);
+    console.log(`Transaction Status: ${transactionStatus}`);
+    console.log(`Fraud Status: ${fraudStatus}`);
+
+    // Mapping status midtrans ke status di database
+    let paymentStatus;
+    if (transactionStatus === 'capture') {
+      paymentStatus = (fraudStatus === 'accept') ? 'paid' : 'challenge';
+    } else if (transactionStatus === 'settlement') {
+      paymentStatus = 'paid';
+    } else if (transactionStatus === 'pending') {
+      paymentStatus = 'pending';
+    } else if (transactionStatus === 'deny' || transactionStatus === 'cancel' || transactionStatus === 'expire') {
+      paymentStatus = 'failed';
     }
+
+    console.log(`Mapped Payment Status: ${paymentStatus}`);
+
+    // Update Firestore
+    if (paymentStatus) {
+      await admin.firestore()
+        .collection('orders')
+        .doc(orderId)
+        .update({ paymentStatus });
+
+      console.log(`Payment status order ${orderId} diupdate menjadi: ${paymentStatus}`);
+    }
+
+    res.status(200).json({ message: 'Notification processed' });
+  } catch (err) {
+    console.error("Error di midtransNotificationHandler:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // ======== ADMIN UPDATE STATUS PESANAN ========
