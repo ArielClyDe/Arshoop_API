@@ -20,6 +20,10 @@ module.exports = [
         method: 'PATCH', // bisa pakai PUT juga, tapi PATCH lebih umum untuk update sebagian
         path: '/orders/status',
         handler: updateOrderStatusHandler,
-
+    },
+    {
+        method: 'GET',
+        path: '/orders/{userId}',
+        handler: getOrdersHandler
     }
 ];

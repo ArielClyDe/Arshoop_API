@@ -192,10 +192,31 @@ const updateOrderStatusHandler = async (request, h) => {
         console.error("Error updateOrderStatusHandler:", error);
         return h.response({ status: "fail", message: error.message }).code(500);
     }
+    
 };
+const getOrdersHandler = async (request, h) => {
+    try {
+        const { userId } = request.params;
+        const snapshot = await db.collection('orders')
+            .where('userId', '==', userId)
+            .get();
+
+        const orders = [];
+        snapshot.forEach(doc => {
+            orders.push(doc.data());
+        });
+
+        return h.response(orders).code(200);
+    } catch (error) {
+        console.error(error);
+        return h.response({ message: 'Gagal mengambil data order' }).code(500);
+    }
+};
+
 
 module.exports = {
     createOrderHandler,
     midtransNotificationHandler,
-    updateOrderStatusHandler
+    updateOrderStatusHandler,
+    getOrdersHandler
 };
