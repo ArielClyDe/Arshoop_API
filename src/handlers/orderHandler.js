@@ -115,22 +115,30 @@ const createOrderHandler = async (request, h) => {
             midtransRedirectUrl,
         });
 
-        // Hapus semua cart item yang diorder dengan batch + logging
-const batch = db.batch();
-const cartRefBase = db.collection('users').doc(userId).collection('cart');
+        // Hapus semua cart item yang diorder berdasarkan field cartId
+        const batch = db.batch();
+        const cartRefBase = db.collection('users').doc(userId).collection('cart');
 
-carts.forEach(cartItem => {
-    if (!cartItem.cartId) {
-        console.warn(`❌ Cart item "${cartItem.name}" tidak punya cartId. Data:`, cartItem);
-        return;
-    }
-    console.log(`🗑 Menghapus cartId: ${cartItem.cartId} (${cartItem.name})`);
-    const cartDocRef = cartRefBase.doc(cartItem.cartId);
-    batch.delete(cartDocRef);
-});
+        for (const cartItem of carts) {
+            if (!cartItem.cartId) {
+                console.warn(`❌ Cart item "${cartItem.name}" tidak punya cartId`);
+                continue;
+            }
 
-await batch.commit();
-console.log(`✅ Semua cart yang dipilih sudah dihapus untuk userId: ${userId}`);
+            const cartQuery = await cartRefBase.where('cartId', '==', cartItem.cartId).get();
+            if (cartQuery.empty) {
+                console.warn(`⚠ Tidak ada dokumen ditemukan dengan cartId: ${cartItem.cartId}`);
+            } else {
+                cartQuery.forEach(doc => {
+                    console.log(`🗑 Menghapus docId: ${doc.id} (cartId: ${cartItem.cartId}, ${cartItem.name})`);
+                    batch.delete(doc.ref);
+                });
+            }
+        }
+
+        await batch.commit();
+        console.log(`✅ Semua cart yang dipilih sudah dihapus untuk userId: ${userId}`);
+
 
 
         return h.response({
