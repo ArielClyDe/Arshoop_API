@@ -64,6 +64,7 @@ const createOrderHandler = async (request, h) => {
             sum + (item.price * item.quantity), 0
         );
 
+        // Data order
         const orderData = {
             orderId,
             userId,
@@ -72,9 +73,9 @@ const createOrderHandler = async (request, h) => {
             ongkir,
             totalPrice: grossAmount,
             paymentMethod,
+            paymentChannel: paymentMethod === 'midtrans' ? null : 'COD',
             deliveryMethod,
-            // status awal untuk pengerjaan
-            status: 'pending', // pending menunggu validasi admin
+            status: 'pending',
             paymentStatus: paymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
             createdAt: new Date().toISOString(),
         };
@@ -120,6 +121,21 @@ const createOrderHandler = async (request, h) => {
             midtransRedirectUrl,
         });
 
+        // Hapus / update cart sesuai jumlah yang dibeli
+        const cartRefBase = db.collection('users').doc(userId).collection('cart');
+        for (const cartItem of carts) {
+            const cartDocRef = cartRefBase.doc(cartItem.cartId);
+            if (!cartItem.originalQuantity || cartItem.quantity >= cartItem.originalQuantity) {
+                // Hapus cart jika checkout semua
+                await cartDocRef.delete();
+            } else {
+                // Update quantity jika checkout sebagian
+                await cartDocRef.update({
+                    quantity: admin.firestore.FieldValue.increment(-cartItem.quantity)
+                });
+            }
+        }
+
         return h.response({
             status: 'success',
             message: 'Order berhasil dibuat',
@@ -131,6 +147,7 @@ const createOrderHandler = async (request, h) => {
         return h.response({ status: 'fail', message: error.message }).code(500);
     }
 };
+
 
 // ======== NOTIFIKASI MIDTRANS ========
 // midtransNotificationHandler.js
@@ -239,16 +256,34 @@ const updateOrderStatusHandler = async (request, h) => {
     }
     
 };
+
+
 const getOrdersHandler = async (request, h) => {
     try {
         const { userId } = request.params;
         const snapshot = await db.collection('orders')
             .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
             .get();
 
-        const orders = [];
-        snapshot.forEach(doc => {
-            orders.push(doc.data());
+        const orders = snapshot.docs.map(doc => {
+            const data = doc.data();
+            let paymentDisplay = '';
+
+            if (data.paymentMethod === 'midtrans') {
+                paymentDisplay = data.paymentChannel 
+                    ? `${data.paymentChannel} ${data.paymentStatus === 'paid' ? 'Lunas' : 'Menunggu Pembayaran'}`
+                    : 'Midtrans';
+            } else if (data.paymentMethod === 'cod') {
+                paymentDisplay = 'COD';
+            }
+
+            return {
+                orderId: data.orderId,
+                totalPrice: data.totalPrice,
+                paymentDisplay, // ✅ label siap pakai di client
+                status: data.status
+            };
         });
 
         return h.response(orders).code(200);
@@ -257,6 +292,7 @@ const getOrdersHandler = async (request, h) => {
         return h.response({ message: 'Gagal mengambil data order' }).code(500);
     }
 };
+
 
 
 module.exports = {
