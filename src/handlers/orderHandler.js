@@ -257,9 +257,10 @@ const getOrdersHandler = async (request, h) => {
     try {
         const { userId } = request.params;
 
+        // Ambil semua order user tanpa orderBy, lalu sortir manual di JS
         const snapshot = await db.collection('orders')
             .where('userId', '==', userId)
-            .get(); // Tanpa orderBy → tidak perlu composite index
+            .get();
 
         if (snapshot.empty) {
             return h.response([]).code(200);
@@ -268,25 +269,38 @@ const getOrdersHandler = async (request, h) => {
         const orders = snapshot.docs
             .map(doc => {
                 const data = doc.data();
+
+                // Pastikan createdAt selalu Date object
+                let createdAtDate;
+                if (data.createdAt?.toDate) {
+                    createdAtDate = data.createdAt.toDate();
+                } else {
+                    createdAtDate = new Date(data.createdAt);
+                }
+
+                // Return persis field asli yang Kotlin butuh
                 return {
-                    ...data,
-                    createdAt: data.createdAt?.toDate
-                        ? data.createdAt.toDate()
-                        : new Date(data.createdAt)
+                    orderId: data.orderId,
+                    totalPrice: data.totalPrice,
+                    paymentMethod: data.paymentMethod,
+                    paymentChannel: data.paymentChannel,
+                    paymentStatus: data.paymentStatus,
+                    status: data.status,
+                    midtransToken: data.midtransToken,
+                    midtransRedirectUrl: data.midtransRedirectUrl,
+                    bankNameFromUrl: data.bankNameFromUrl || null,
+                    createdAt: createdAtDate
                 };
             })
-            .sort((a, b) => b.createdAt - a.createdAt) // Urutkan dari terbaru
-            .map(order => ({
-                ...order,
-                createdAt: order.createdAt.toISOString() // Kembalikan ke string ISO
-            }));
+            .sort((a, b) => b.createdAt - a.createdAt); // urut terbaru
 
         return h.response(orders).code(200);
     } catch (error) {
-        console.error('Error getOrdersHandler:', error);
+        console.error("Error getOrdersHandler:", error);
         return h.response({ message: 'Gagal mengambil data order' }).code(500);
     }
 };
+
 
 
 
