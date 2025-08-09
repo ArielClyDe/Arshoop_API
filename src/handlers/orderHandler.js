@@ -32,6 +32,7 @@ const createOrderHandler = async (request, h) => {
             return h.response({ status: 'fail', message: 'Data order tidak lengkap' }).code(400);
         }
 
+        const normalizedPaymentMethod = paymentMethod?.toLowerCase();
         const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
         const itemDetails = carts.map(item => {
@@ -67,18 +68,18 @@ const createOrderHandler = async (request, h) => {
             alamat,
             ongkir,
             totalPrice: grossAmount,
-            paymentMethod,
-            paymentChannel: paymentMethod === 'midtrans' ? null : 'COD',
+            paymentMethod: normalizedPaymentMethod,
+            paymentChannel: normalizedPaymentMethod === 'midtrans' ? null : 'COD',
             deliveryMethod,
             status: 'pending',
-            paymentStatus: paymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
-            createdAt: new Date().toISOString(),
+            paymentStatus: normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
+            createdAt: admin.firestore.Timestamp.now(), // simpan Timestamp Firestore
         };
 
         let midtransToken = null;
         let midtransRedirectUrl = null;
 
-        if (paymentMethod === 'midtrans') {
+        if (normalizedPaymentMethod === 'midtrans') {
             const midtransParams = {
                 transaction_details: {
                     order_id: orderId,
@@ -114,12 +115,10 @@ const createOrderHandler = async (request, h) => {
             midtransRedirectUrl,
         });
 
-        // Hapus / update cart sesuai jumlah yang dibeli
+        // Hapus / update cart
         const cartRefBase = db.collection('users').doc(userId).collection('cart');
         for (const cartItem of carts) {
             const cartDocRef = cartRefBase.doc(cartItem.cartId);
-
-            // Kalau originalQuantity tidak ada → hapus semua
             const originalQty = cartItem.originalQuantity ?? cartItem.quantity;
 
             if (cartItem.quantity >= originalQty) {
@@ -142,6 +141,7 @@ const createOrderHandler = async (request, h) => {
         return h.response({ status: 'fail', message: error.message }).code(500);
     }
 };
+
 
 
 
@@ -257,7 +257,6 @@ const getOrdersHandler = async (request, h) => {
     try {
         const { userId } = request.params;
 
-        // Ambil semua order dari Firestore
         const snapshot = await db.collection('orders').get();
 
         if (snapshot.empty) {
@@ -266,21 +265,23 @@ const getOrdersHandler = async (request, h) => {
 
         const orders = snapshot.docs
             .map(doc => doc.data())
-            .filter(order => order.userId === userId) // Filter manual di Node.js
+            .filter(order => order.userId === userId)
             .map(data => {
-                // Pastikan createdAt jadi Date
                 let createdAtDate = data.createdAt?.toDate
                     ? data.createdAt.toDate()
                     : new Date(data.createdAt);
 
-                // Format display pembayaran
                 let paymentDisplay = '';
-                if (data.paymentMethod === 'midtrans') {
+                const pm = data.paymentMethod?.toLowerCase();
+
+                if (pm === 'midtrans') {
                     paymentDisplay = data.paymentChannel
                         ? `${data.paymentChannel} ${data.paymentStatus === 'paid' ? 'Lunas' : 'Menunggu Pembayaran'}`
-                        : 'Midtrans';
-                } else if (data.paymentMethod === 'cod') {
+                        : `Midtrans ${data.paymentStatus === 'paid' ? 'Lunas' : 'Menunggu Pembayaran'}`;
+                } else if (pm === 'cod') {
                     paymentDisplay = 'COD';
+                } else {
+                    paymentDisplay = data.paymentMethod || '-';
                 }
 
                 return {
@@ -291,7 +292,7 @@ const getOrdersHandler = async (request, h) => {
                     createdAt: createdAtDate
                 };
             })
-            .sort((a, b) => b.createdAt - a.createdAt); // Urut terbaru
+            .sort((a, b) => b.createdAt - a.createdAt);
 
         return h.response(orders).code(200);
 
@@ -300,6 +301,7 @@ const getOrdersHandler = async (request, h) => {
         return h.response({ message: 'Gagal mengambil data order' }).code(500);
     }
 };
+
 
 
 
