@@ -254,35 +254,51 @@ const updateOrderStatusHandler = async (request, h) => {
 };
 
 const getOrdersHandler = async (request, h) => {
-    try {
-        const { userId } = request.params;
+  try {
+    const userId = request.auth.credentials.userId;
 
-        const snapshot = await db.collection('orders')
-            .where('userId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .get();
+    const snapshot = await db
+      .collection("orders")
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc") // aman tanpa composite index
+      .get();
 
-        if (snapshot.empty) {
-            return h.response([]).code(200);
-        }
+    const orders = snapshot.docs.map(doc => {
+      const data = doc.data();
 
-        const orders = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                ...data,
-                createdAt: data.createdAt?.toDate
-                    ? data.createdAt.toDate().toISOString()
-                    : new Date(data.createdAt).toISOString()
-            };
-        });
+      return {
+        orderId: doc.id, // pakai docId biar pasti ada
+        paymentMethod: data.paymentMethod || null,
+        paymentChannel: data.paymentChannel || null,
+        paymentStatus: data.paymentStatus || null,
+        status: data.status || null,
+        totalPrice: data.totalPrice || null,
+        midtransToken: data.midtransToken || null,
+        midtransRedirectUrl: data.midtransRedirectUrl || null,
+        bankNameFromUrl: data.bankNameFromUrl || null,
+        createdAt: data.createdAt || null
+      };
+    });
 
-        return h.response(orders).code(200);
+    return h
+      .response({
+        status: "success",
+        message: "Orders retrieved successfully",
+        data: orders
+      })
+      .code(200);
 
-    } catch (error) {
-        console.error("Error getOrdersHandler:", error);
-        return h.response({ message: 'Gagal mengambil data order' }).code(500);
-    }
+  } catch (error) {
+    console.error("Error getOrdersHandler:", error);
+    return h
+      .response({
+        status: "error",
+        message: "Failed to retrieve orders"
+      })
+      .code(500);
+  }
 };
+
 
 
 
