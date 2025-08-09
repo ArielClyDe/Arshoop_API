@@ -254,68 +254,38 @@ const updateOrderStatusHandler = async (request, h) => {
 };
 
 const getOrdersHandler = async (request, h) => {
-  try {
-    const userId = request.auth?.credentials?.userId || request.params?.userId;
+    try {
+        const { userId } = request.params;
 
-    console.log("📩 UserID dari request:", userId);
+        const snapshot = await db.collection('orders')
+            .where('userId', '==', userId)
+            .get(); // Tanpa orderBy → tidak perlu composite index
 
-    if (!userId) {
-      return h
-        .response({
-          status: "fail",
-          message: "User ID not found. Please login or provide ?userId="
-        })
-        .code(400);
+        if (snapshot.empty) {
+            return h.response([]).code(200);
+        }
+
+        const orders = snapshot.docs
+            .map(doc => {
+                const data = doc.data();
+                return {
+                    ...data,
+                    createdAt: data.createdAt?.toDate
+                        ? data.createdAt.toDate()
+                        : new Date(data.createdAt)
+                };
+            })
+            .sort((a, b) => b.createdAt - a.createdAt) // Urutkan dari terbaru
+            .map(order => ({
+                ...order,
+                createdAt: order.createdAt.toISOString() // Kembalikan ke string ISO
+            }));
+
+        return h.response(orders).code(200);
+    } catch (error) {
+        console.error('Error getOrdersHandler:', error);
+        return h.response({ message: 'Gagal mengambil data order' }).code(500);
     }
-
-    // Ambil semua order untuk debug dulu
-    const snapshot = await db.collection("orders").get();
-
-    const orders = snapshot.docs.map(doc => {
-      const data = doc.data();
-      console.log(`🗂 OrderID: ${doc.id} | userId di DB: ${data.userId}`);
-      return {
-        orderId: doc.id,
-        paymentMethod: data.paymentMethod || null,
-        paymentChannel: data.paymentChannel || null,
-        paymentStatus: data.paymentStatus || null,
-        status: data.status || null,
-        totalPrice: data.totalPrice || null,
-        midtransToken: data.midtransToken || null,
-        midtransRedirectUrl: data.midtransRedirectUrl || null,
-        bankNameFromUrl: data.bankNameFromUrl || null,
-        createdAt: data.createdAt || null,
-        userId: data.userId || null // tambahkan untuk debug
-      };
-    });
-
-    // Sort manual
-    orders.sort((a, b) => {
-      const timeA = a.createdAt?._seconds || 0;
-      const timeB = b.createdAt?._seconds || 0;
-      return timeB - timeA;
-    });
-
-    // Filter manual berdasarkan userId
-    const filteredOrders = orders.filter(o => o.userId === userId);
-
-    return h
-      .response({
-        status: "success",
-        message: "Orders retrieved successfully",
-        data: filteredOrders
-      })
-      .code(200);
-
-  } catch (error) {
-    console.error("Error getOrdersHandler:", error);
-    return h
-      .response({
-        status: "error",
-        message: "Failed to retrieve orders"
-      })
-      .code(500);
-  }
 };
 
 
