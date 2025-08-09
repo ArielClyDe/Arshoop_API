@@ -73,7 +73,7 @@ const createOrderHandler = async (request, h) => {
             deliveryMethod,
             status: 'pending',
             paymentStatus: normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
-            createdAt: admin.firestore.Timestamp.now(), // simpan Timestamp Firestore
+            createdAt: admin.firestore.Timestamp.now(),
         };
 
         let midtransToken = null;
@@ -115,24 +115,20 @@ const createOrderHandler = async (request, h) => {
             midtransRedirectUrl,
         });
 
-        // Hapus / update cart
+        // Hapus semua cart item yang diorder dengan batch
+        const batch = db.batch();
         const cartRefBase = db.collection('users').doc(userId).collection('cart');
-        for (const cartItem of carts) {
-            const cartDocRef = cartRefBase.doc(cartItem.cartId);
-            const originalQty = cartItem.originalQuantity ?? cartItem.quantity;
 
-            if (cartItem.quantity >= originalQty) {
-                await cartDocRef.delete();
-            } else {
-                await cartDocRef.update({
-                    quantity: admin.firestore.FieldValue.increment(-cartItem.quantity)
-                });
-            }
-        }
+        carts.forEach(cartItem => {
+            const cartDocRef = cartRefBase.doc(cartItem.cartId);
+            batch.delete(cartDocRef);
+        });
+
+        await batch.commit();
 
         return h.response({
             status: 'success',
-            message: 'Order berhasil dibuat',
+            message: 'Order berhasil dibuat dan cart dihapus',
             data: { orderId, midtransToken, midtransRedirectUrl }
         }).code(201);
 
@@ -141,6 +137,7 @@ const createOrderHandler = async (request, h) => {
         return h.response({ status: 'fail', message: error.message }).code(500);
     }
 };
+
 
 
 
