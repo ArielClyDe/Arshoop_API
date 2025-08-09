@@ -256,30 +256,27 @@ const updateOrderStatusHandler = async (request, h) => {
 const getOrdersHandler = async (request, h) => {
     try {
         const { userId } = request.params;
-        
-        const snapshot = await db.collection('orders')
-            .where('userId', '==', userId)
-            .get(); // Tanpa orderBy, aman dari composite index
+
+        // Ambil semua order dari Firestore
+        const snapshot = await db.collection('orders').get();
 
         if (snapshot.empty) {
-            return h.response([]).code(200); // Tidak ada order
+            return h.response([]).code(200);
         }
 
         const orders = snapshot.docs
-            .map(doc => {
-                const data = doc.data();
+            .map(doc => doc.data())
+            .filter(order => order.userId === userId) // Filter manual di Node.js
+            .map(data => {
+                // Pastikan createdAt jadi Date
+                let createdAtDate = data.createdAt?.toDate
+                    ? data.createdAt.toDate()
+                    : new Date(data.createdAt);
 
-                // Konversi createdAt ke Date object
-                let createdAtDate;
-                if (data.createdAt?.toDate) {
-                    createdAtDate = data.createdAt.toDate();
-                } else {
-                    createdAtDate = new Date(data.createdAt);
-                }
-
+                // Format display pembayaran
                 let paymentDisplay = '';
                 if (data.paymentMethod === 'midtrans') {
-                    paymentDisplay = data.paymentChannel 
+                    paymentDisplay = data.paymentChannel
                         ? `${data.paymentChannel} ${data.paymentStatus === 'paid' ? 'Lunas' : 'Menunggu Pembayaran'}`
                         : 'Midtrans';
                 } else if (data.paymentMethod === 'cod') {
@@ -294,14 +291,16 @@ const getOrdersHandler = async (request, h) => {
                     createdAt: createdAtDate
                 };
             })
-            .sort((a, b) => b.createdAt - a.createdAt); // Urutkan dari terbaru
+            .sort((a, b) => b.createdAt - a.createdAt); // Urut terbaru
 
         return h.response(orders).code(200);
+
     } catch (error) {
-        console.error(error);
+        console.error("Error getOrdersHandler:", error);
         return h.response({ message: 'Gagal mengambil data order' }).code(500);
     }
 };
+
 
 
 
