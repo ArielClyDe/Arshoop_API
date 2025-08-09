@@ -115,29 +115,32 @@ const createOrderHandler = async (request, h) => {
             midtransRedirectUrl,
         });
 
-        // Hapus semua cart item yang diorder berdasarkan field cartId
-        const batch = db.batch();
-        const cartRefBase = db.collection('users').doc(userId).collection('cart');
+        // Hapus semua cart item yang diorder dengan batch + logging path & cek keberadaan
+            const batch = db.batch();
+            const cartRefBase = db.collection('users').doc(userId).collection('cart');
 
-        for (const cartItem of carts) {
-            if (!cartItem.cartId) {
-                console.warn(`❌ Cart item "${cartItem.name}" tidak punya cartId`);
-                continue;
+            for (const cartItem of carts) {
+                if (!cartItem.cartId) {
+                    console.warn(`❌ Cart item "${cartItem.name}" tidak punya cartId`);
+                    continue;
+                }
+
+                const docPath = `users/${userId}/cart/${cartItem.cartId}`;
+                console.log(`🔍 Mengecek dokumen: ${docPath}`);
+
+                const docSnap = await cartRefBase.doc(cartItem.cartId).get();
+                if (!docSnap.exists) {
+                    console.warn(`⚠ Tidak ada dokumen di path: ${docPath}`);
+                    continue;
+                }
+
+                console.log(`🗑 Menghapus dokumen: ${docPath}`);
+                batch.delete(cartRefBase.doc(cartItem.cartId));
             }
 
-            const cartQuery = await cartRefBase.where('cartId', '==', cartItem.cartId).get();
-            if (cartQuery.empty) {
-                console.warn(`⚠ Tidak ada dokumen ditemukan dengan cartId: ${cartItem.cartId}`);
-            } else {
-                cartQuery.forEach(doc => {
-                    console.log(`🗑 Menghapus docId: ${doc.id} (cartId: ${cartItem.cartId}, ${cartItem.name})`);
-                    batch.delete(doc.ref);
-                });
-            }
-        }
+            await batch.commit();
+            console.log(`✅ Proses penghapusan cart selesai untuk userId: ${userId}`);
 
-        await batch.commit();
-        console.log(`✅ Semua cart yang dipilih sudah dihapus untuk userId: ${userId}`);
 
 
 
