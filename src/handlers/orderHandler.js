@@ -257,33 +257,22 @@ const getOrdersHandler = async (request, h) => {
   try {
     const userId = request.auth.credentials.userId;
 
+    // Query hanya orderBy satu field untuk hindari composite index
     const snapshot = await db
       .collection("orders")
       .where("userId", "==", userId)
-      .orderBy("createdAt", "desc") // aman tanpa composite index
+      .orderBy("createdAt", "desc")
       .get();
 
-    const orders = snapshot.docs.map(doc => {
-      const data = doc.data();
-
-      return {
-        orderId: doc.id, // pakai docId biar pasti ada
-        paymentMethod: data.paymentMethod || null,
-        paymentChannel: data.paymentChannel || null,
-        paymentStatus: data.paymentStatus || null,
-        status: data.status || null,
-        totalPrice: data.totalPrice || null,
-        midtransToken: data.midtransToken || null,
-        midtransRedirectUrl: data.midtransRedirectUrl || null,
-        bankNameFromUrl: data.bankNameFromUrl || null,
-        createdAt: data.createdAt || null
-      };
-    });
+    const orders = snapshot.docs.map(doc => ({
+      orderId: doc.id,
+      ...doc.data()
+    }));
 
     return h
       .response({
         status: "success",
-        message: "Orders retrieved successfully",
+        message: "Orders retrieved",
         data: orders
       })
       .code(200);
