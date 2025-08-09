@@ -134,7 +134,6 @@ const createOrderHandler = async (request, h) => {
 
 // ======== NOTIFIKASI MIDTRANS ========
 // midtransNotificationHandler.js
-
 const midtransNotificationHandler = async (request, h) => {
   try {
     console.log("==== Midtrans Notification Diterima ====");
@@ -162,6 +161,7 @@ const midtransNotificationHandler = async (request, h) => {
     console.log(`Transaction Status: ${transactionStatus}`);
     console.log(`Fraud Status: ${fraudStatus}`);
 
+    // Tentukan paymentStatus
     let paymentStatus;
     if (transactionStatus === 'capture') {
       paymentStatus = (fraudStatus === 'accept') ? 'paid' : 'challenge';
@@ -175,8 +175,29 @@ const midtransNotificationHandler = async (request, h) => {
 
     console.log(`Mapped Payment Status: ${paymentStatus}`);
 
+    // 🔹 Ambil info metode pembayaran dari Midtrans
+    let paymentChannel = "";
+    const paymentType = statusResponse.payment_type;
+
+    if (paymentType === "bank_transfer" && statusResponse.va_numbers?.length) {
+      paymentChannel = statusResponse.va_numbers[0].bank.toUpperCase(); // contoh: BCA, BNI
+    } else if (paymentType === "qris") {
+      paymentChannel = "QRIS " + (statusResponse.acquirer?.toUpperCase() || "");
+    } else if (paymentType === "echannel") {
+      paymentChannel = "Mandiri Bill Payment";
+    } else if (paymentType) {
+      paymentChannel = paymentType.toUpperCase();
+    }
+
+    console.log(`Payment Channel: ${paymentChannel}`);
+
+    // Update Firestore
     if (paymentStatus) {
-      const updateData = { paymentStatus };
+      const updateData = { 
+        paymentStatus,
+        paymentChannel // simpan jenis pembayaran
+      };
+
       if (paymentStatus === 'paid') {
         updateData.status = 'process';
       }
