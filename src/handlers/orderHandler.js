@@ -116,8 +116,8 @@ const createOrderHandler = async (request, h) => {
         });
 
         // Hapus semua cart item yang diorder dengan batch + logging path & cek keberadaan
+           // langsung hapus dari koleksi global carts
             const batch = db.batch();
-            const cartRefBase = db.collection('users').doc(userId).collection('carts');
 
             for (const cartItem of carts) {
                 if (!cartItem.cartId) {
@@ -125,17 +125,16 @@ const createOrderHandler = async (request, h) => {
                     continue;
                 }
 
-                const docPath = `users/${userId}/carts/${cartItem.cartId}`;
-                console.log(`🔍 Mengecek dokumen: ${docPath}`);
+                const docRef = db.collection('carts').doc(cartItem.cartId);
+                const docSnap = await docRef.get();
 
-                const docSnap = await cartRefBase.doc(cartItem.cartId).get();
                 if (!docSnap.exists) {
-                    console.warn(`⚠ Tidak ada dokumen di path: ${docPath}`);
+                    console.warn(`⚠ Tidak ada dokumen carts/${cartItem.cartId}`);
                     continue;
                 }
 
-                console.log(`🗑 Menghapus dokumen: ${docPath}`);
-                batch.delete(cartRefBase.doc(cartItem.cartId));
+                console.log(`🗑 Menghapus dokumen: carts/${cartItem.cartId}`);
+                batch.delete(docRef);
             }
 
             await batch.commit();
