@@ -257,6 +257,8 @@ const getOrdersHandler = async (request, h) => {
   try {
     const userId = request.auth?.credentials?.userId || request.params?.userId;
 
+    console.log("📩 UserID dari request:", userId);
+
     if (!userId) {
       return h
         .response({
@@ -266,53 +268,42 @@ const getOrdersHandler = async (request, h) => {
         .code(400);
     }
 
-    let snapshot;
-
-    try {
-      // Coba query dengan orderBy
-      snapshot = await db
-        .collection("orders")
-        .where("userId", "==", userId)
-        .orderBy("createdAt", "desc")
-        .get();
-    } catch (err) {
-      console.warn("orderBy gagal, fallback tanpa sorting:", err.message);
-      // Kalau gagal (misalnya createdAt null atau butuh index), coba tanpa orderBy
-      snapshot = await db
-        .collection("orders")
-        .where("userId", "==", userId)
-        .get();
-    }
+    // Ambil semua order untuk debug dulu
+    const snapshot = await db.collection("orders").get();
 
     const orders = snapshot.docs.map(doc => {
-  const data = doc.data();
-  return {
-    orderId: doc.id,
-    paymentMethod: data.paymentMethod || null,
-    paymentChannel: data.paymentChannel || null,
-    paymentStatus: data.paymentStatus || null,
-    status: data.status || null,
-    totalPrice: data.totalPrice || null,
-    midtransToken: data.midtransToken || null,
-    midtransRedirectUrl: data.midtransRedirectUrl || null,
-    bankNameFromUrl: data.bankNameFromUrl || null,
-    createdAt: data.createdAt || null
-  };
-});
+      const data = doc.data();
+      console.log(`🗂 OrderID: ${doc.id} | userId di DB: ${data.userId}`);
+      return {
+        orderId: doc.id,
+        paymentMethod: data.paymentMethod || null,
+        paymentChannel: data.paymentChannel || null,
+        paymentStatus: data.paymentStatus || null,
+        status: data.status || null,
+        totalPrice: data.totalPrice || null,
+        midtransToken: data.midtransToken || null,
+        midtransRedirectUrl: data.midtransRedirectUrl || null,
+        bankNameFromUrl: data.bankNameFromUrl || null,
+        createdAt: data.createdAt || null,
+        userId: data.userId || null // tambahkan untuk debug
+      };
+    });
 
-// 🔹 Sorting manual: terbaru di atas
-orders.sort((a, b) => {
-  const timeA = a.createdAt?._seconds || 0;
-  const timeB = b.createdAt?._seconds || 0;
-  return timeB - timeA;
-});
+    // Sort manual
+    orders.sort((a, b) => {
+      const timeA = a.createdAt?._seconds || 0;
+      const timeB = b.createdAt?._seconds || 0;
+      return timeB - timeA;
+    });
 
+    // Filter manual berdasarkan userId
+    const filteredOrders = orders.filter(o => o.userId === userId);
 
     return h
       .response({
         status: "success",
         message: "Orders retrieved successfully",
-        data: orders
+        data: filteredOrders
       })
       .code(200);
 
@@ -326,6 +317,7 @@ orders.sort((a, b) => {
       .code(500);
   }
 };
+
 
 
 
