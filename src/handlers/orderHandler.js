@@ -259,30 +259,35 @@ const getOrdersHandler = async (request, h) => {
 
         const snapshot = await db.collection('orders')
             .where('userId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .get();
+            .get(); // Tanpa orderBy → tidak perlu composite index
 
         if (snapshot.empty) {
             return h.response([]).code(200);
         }
 
-        const orders = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                ...data,
-                createdAt: data.createdAt?.toDate
-                    ? data.createdAt.toDate().toISOString()
-                    : new Date(data.createdAt).toISOString()
-            };
-        });
+        const orders = snapshot.docs
+            .map(doc => {
+                const data = doc.data();
+                return {
+                    ...data,
+                    createdAt: data.createdAt?.toDate
+                        ? data.createdAt.toDate()
+                        : new Date(data.createdAt)
+                };
+            })
+            .sort((a, b) => b.createdAt - a.createdAt) // Urutkan dari terbaru
+            .map(order => ({
+                ...order,
+                createdAt: order.createdAt.toISOString() // Kembalikan ke string ISO
+            }));
 
         return h.response(orders).code(200);
-
     } catch (error) {
-        console.error("Error getOrdersHandler:", error);
+        console.error('Error getOrdersHandler:', error);
         return h.response({ message: 'Gagal mengambil data order' }).code(500);
     }
 };
+
 
 
 
