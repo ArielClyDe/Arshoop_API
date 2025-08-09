@@ -254,52 +254,51 @@ const updateOrderStatusHandler = async (request, h) => {
 };
 
 const getOrdersHandler = async (request, h) => {
-    try {
-        const { userId } = request.params;
+  try {
+    const userId = request.auth.credentials.userId;
 
-        // Ambil semua order user tanpa orderBy, lalu sortir manual di JS
-        const snapshot = await db.collection('orders')
-            .where('userId', '==', userId)
-            .get();
+    const snapshot = await db
+      .collection("orders")
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc") // aman tanpa composite index
+      .get();
 
-        if (snapshot.empty) {
-            return h.response([]).code(200);
-        }
+    const orders = snapshot.docs.map(doc => {
+      const data = doc.data();
 
-        const orders = snapshot.docs
-            .map(doc => {
-                const data = doc.data();
+      return {
+        orderId: doc.id, // pakai docId biar pasti ada
+        paymentMethod: data.paymentMethod || null,
+        paymentChannel: data.paymentChannel || null,
+        paymentStatus: data.paymentStatus || null,
+        status: data.status || null,
+        totalPrice: data.totalPrice || null,
+        midtransToken: data.midtransToken || null,
+        midtransRedirectUrl: data.midtransRedirectUrl || null,
+        bankNameFromUrl: data.bankNameFromUrl || null,
+        createdAt: data.createdAt || null
+      };
+    });
 
-                // Pastikan createdAt selalu Date object
-                let createdAtDate;
-                if (data.createdAt?.toDate) {
-                    createdAtDate = data.createdAt.toDate();
-                } else {
-                    createdAtDate = new Date(data.createdAt);
-                }
+    return h
+      .response({
+        status: "success",
+        message: "Orders retrieved successfully",
+        data: orders
+      })
+      .code(200);
 
-                // Return persis field asli yang Kotlin butuh
-                return {
-                    orderId: data.orderId,
-                    totalPrice: data.totalPrice,
-                    paymentMethod: data.paymentMethod,
-                    paymentChannel: data.paymentChannel,
-                    paymentStatus: data.paymentStatus,
-                    status: data.status,
-                    midtransToken: data.midtransToken,
-                    midtransRedirectUrl: data.midtransRedirectUrl,
-                    bankNameFromUrl: data.bankNameFromUrl || null,
-                    createdAt: createdAtDate
-                };
-            })
-            .sort((a, b) => b.createdAt - a.createdAt); // urut terbaru
-
-        return h.response(orders).code(200);
-    } catch (error) {
-        console.error("Error getOrdersHandler:", error);
-        return h.response({ message: 'Gagal mengambil data order' }).code(500);
-    }
+  } catch (error) {
+    console.error("Error getOrdersHandler:", error);
+    return h
+      .response({
+        status: "error",
+        message: "Failed to retrieve orders"
+      })
+      .code(500);
+  }
 };
+
 
 
 
