@@ -133,9 +133,6 @@ const createOrderHandler = async (request, h) => {
 
 // ======== NOTIFIKASI MIDTRANS ========
 // midtransNotificationHandler.js
-const midtransClient = require('midtrans-client');
-const admin = require('firebase-admin');
-
 const midtransNotificationHandler = async (req, res) => {
   try {
     console.log("==== Midtrans Notification Diterima ====");
