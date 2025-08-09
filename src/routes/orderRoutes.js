@@ -2,7 +2,8 @@ const Hapi = require('@hapi/hapi');
 const {
     createOrderHandler,
     midtransNotificationHandler,
-    updateOrderStatusHandler
+    updateOrderStatusHandler,
+    getOrdersHandler
 } = require('../handlers/orderHandler');
 
 module.exports = [
