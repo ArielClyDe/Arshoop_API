@@ -157,11 +157,19 @@ const midtransNotificationHandler = async (request, h) => {
     const transactionStatus = statusResponse.transaction_status;
     const fraudStatus = statusResponse.fraud_status;
 
-    console.log(`OrderID: ${orderId}`);
-    console.log(`Transaction Status: ${transactionStatus}`);
-    console.log(`Fraud Status: ${fraudStatus}`);
+    // Tentukan channel pembayaran
+    let paymentChannel = "";
+    if (statusResponse.payment_type === "bank_transfer" && statusResponse.va_numbers?.length) {
+      paymentChannel = statusResponse.va_numbers[0].bank.toUpperCase();
+    } else if (statusResponse.payment_type === "qris") {
+      paymentChannel = `QRIS ${statusResponse.acquirer?.toUpperCase() || ""}`.trim();
+    } else if (statusResponse.payment_type) {
+      paymentChannel = statusResponse.payment_type.toUpperCase();
+    }
 
-    // Tentukan paymentStatus
+    console.log(`Payment Channel: ${paymentChannel}`);
+
+    // Map status pembayaran
     let paymentStatus;
     if (transactionStatus === 'capture') {
       paymentStatus = (fraudStatus === 'accept') ? 'paid' : 'challenge';
@@ -169,33 +177,17 @@ const midtransNotificationHandler = async (request, h) => {
       paymentStatus = 'paid';
     } else if (transactionStatus === 'pending') {
       paymentStatus = 'pending';
-    } else if (transactionStatus === 'deny' || transactionStatus === 'cancel' || transactionStatus === 'expire') {
+    } else if (['deny', 'cancel', 'expire'].includes(transactionStatus)) {
       paymentStatus = 'failed';
     }
 
     console.log(`Mapped Payment Status: ${paymentStatus}`);
 
-    // 🔹 Ambil info metode pembayaran dari Midtrans
-    let paymentChannel = "";
-    const paymentType = statusResponse.payment_type;
-
-    if (paymentType === "bank_transfer" && statusResponse.va_numbers?.length) {
-      paymentChannel = statusResponse.va_numbers[0].bank.toUpperCase(); // contoh: BCA, BNI
-    } else if (paymentType === "qris") {
-      paymentChannel = "QRIS " + (statusResponse.acquirer?.toUpperCase() || "");
-    } else if (paymentType === "echannel") {
-      paymentChannel = "Mandiri Bill Payment";
-    } else if (paymentType) {
-      paymentChannel = paymentType.toUpperCase();
-    }
-
-    console.log(`Payment Channel: ${paymentChannel}`);
-
-    // Update Firestore
     if (paymentStatus) {
       const updateData = { 
         paymentStatus,
-        paymentChannel // simpan jenis pembayaran
+        paymentMethod: "midtrans",
+        paymentChannel
       };
 
       if (paymentStatus === 'paid') {
@@ -217,6 +209,7 @@ const midtransNotificationHandler = async (request, h) => {
     return h.response({ error: err.message }).code(500);
   }
 };
+
 
 
 
