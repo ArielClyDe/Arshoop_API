@@ -133,16 +133,22 @@ const createOrderHandler = async (request, h) => {
 
 // ======== NOTIFIKASI MIDTRANS ========
 // midtransNotificationHandler.js
-// pastikan `db` dan `core` sudah dideklarasikan di atas file (sesuai file kamu)
-const midtransNotificationHandler = async (request, h) => {
+
+const midtransNotificationHandler = async (req, res) => {
   try {
     console.log("==== Midtrans Notification Diterima ====");
-    console.log("Headers:", request.headers);
-    console.log("Payload:", JSON.stringify(request.payload, null, 2));
+    console.log("Headers:", req.headers);
+    console.log("Body:", JSON.stringify(req.body, null, 2));
 
-    const notificationJson = request.payload;
+    const notificationJson = req.body;
 
-    // Verifikasi / ambil status via Midtrans Core API
+    const core = new midtransClient.CoreApi({
+      isProduction: false, // sandbox
+      serverKey: process.env.MIDTRANS_SERVER_KEY,
+      clientKey: process.env.MIDTRANS_CLIENT_KEY
+    });
+
+    // Ambil status dari Midtrans
     const statusResponse = await core.transaction.notification(notificationJson);
 
     console.log("==== Status Response dari Midtrans ====");
@@ -156,7 +162,7 @@ const midtransNotificationHandler = async (request, h) => {
     console.log(`Transaction Status: ${transactionStatus}`);
     console.log(`Fraud Status: ${fraudStatus}`);
 
-    // Mapping transaction status -> paymentStatus yang akan disimpan di Firestore
+    // Mapping status midtrans ke status di database
     let paymentStatus;
     if (transactionStatus === 'capture') {
       paymentStatus = (fraudStatus === 'accept') ? 'paid' : 'challenge';
@@ -164,39 +170,36 @@ const midtransNotificationHandler = async (request, h) => {
       paymentStatus = 'paid';
     } else if (transactionStatus === 'pending') {
       paymentStatus = 'pending';
-    } else if (['deny', 'cancel', 'expire'].includes(transactionStatus)) {
+    } else if (transactionStatus === 'deny' || transactionStatus === 'cancel' || transactionStatus === 'expire') {
       paymentStatus = 'failed';
-    } else if (transactionStatus === 'refund') {
-      paymentStatus = 'refunded';
     }
 
     console.log(`Mapped Payment Status: ${paymentStatus}`);
 
-    // Siapkan data update
-    const updateData = {
-      midtransStatus: statusResponse,
-      updatedAt: new Date().toISOString()
-    };
-    if (paymentStatus) updateData.paymentStatus = paymentStatus;
+    // Update Firestore
+    if (paymentStatus) {
+      const updateData = { paymentStatus };
 
-    // Update Firestore (cek dulu apakah dokumen ada)
-    const orderRef = db.collection('orders').doc(orderId);
-    const orderDoc = await orderRef.get();
-    if (!orderDoc.exists) {
-      console.warn(`Order ${orderId} tidak ditemukan di Firestore — abaikan update atau buat catatan.`);
-      // Jika kamu mau, bisa buat dokumen baru di sini, tapi biasanya lebih baik log & return 200 agar Midtrans tidak retry terus
-    } else {
-      await orderRef.update(updateData);
-      console.log(`Payment status order ${orderId} diupdate menjadi: ${paymentStatus}`);
+      // kalau paid, langsung ubah status jadi process
+      if (paymentStatus === 'paid') {
+        updateData.status = 'process';
+      }
+
+      await admin.firestore()
+        .collection('orders')
+        .doc(orderId)
+        .update(updateData);
+
+      console.log(`Order ${orderId} diupdate menjadi:`, updateData);
     }
 
-    return h.response({ success: true, message: 'Notifikasi diproses' }).code(200);
+    res.status(200).json({ message: 'Notification processed' });
   } catch (err) {
     console.error("Error di midtransNotificationHandler:", err);
-    // Jangan return stack trace sensitif, cukup message. Midtrans akan melihat HTTP 500 sebagai gagal.
-    return h.response({ success: false, message: err.message }).code(500);
+    res.status(500).json({ error: err.message });
   }
 };
+
 
 
 // ======== ADMIN UPDATE STATUS PESANAN ========
