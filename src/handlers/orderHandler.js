@@ -117,7 +117,7 @@ const createOrderHandler = async (request, h) => {
 
         // Hapus semua cart item yang diorder dengan batch + logging path & cek keberadaan
             const batch = db.batch();
-            const cartRefBase = db.collection('users').doc(userId).collection('cart');
+            const cartRefBase = db.collection('users').doc(userId).collection('carts');
 
             for (const cartItem of carts) {
                 if (!cartItem.cartId) {
@@ -125,7 +125,7 @@ const createOrderHandler = async (request, h) => {
                     continue;
                 }
 
-                const docPath = `users/${userId}/cart/${cartItem.cartId}`;
+                const docPath = `users/${userId}/carts/${cartItem.cartId}`;
                 console.log(`🔍 Mengecek dokumen: ${docPath}`);
 
                 const docSnap = await cartRefBase.doc(cartItem.cartId).get();
