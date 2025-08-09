@@ -115,16 +115,23 @@ const createOrderHandler = async (request, h) => {
             midtransRedirectUrl,
         });
 
-        // Hapus semua cart item yang diorder dengan batch
-        const batch = db.batch();
-        const cartRefBase = db.collection('users').doc(userId).collection('cart');
+        // Hapus semua cart item yang diorder dengan batch + logging
+const batch = db.batch();
+const cartRefBase = db.collection('users').doc(userId).collection('cart');
 
-        carts.forEach(cartItem => {
-            const cartDocRef = cartRefBase.doc(cartItem.cartId);
-            batch.delete(cartDocRef);
-        });
+carts.forEach(cartItem => {
+    if (!cartItem.cartId) {
+        console.warn(`❌ Cart item "${cartItem.name}" tidak punya cartId. Data:`, cartItem);
+        return;
+    }
+    console.log(`🗑 Menghapus cartId: ${cartItem.cartId} (${cartItem.name})`);
+    const cartDocRef = cartRefBase.doc(cartItem.cartId);
+    batch.delete(cartDocRef);
+});
 
-        await batch.commit();
+await batch.commit();
+console.log(`✅ Semua cart yang dipilih sudah dihapus untuk userId: ${userId}`);
+
 
         return h.response({
             status: 'success',
