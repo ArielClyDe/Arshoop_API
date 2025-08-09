@@ -32,10 +32,8 @@ const createOrderHandler = async (request, h) => {
             return h.response({ status: 'fail', message: 'Data order tidak lengkap' }).code(400);
         }
 
-        // Buat Order ID unik
         const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-        // Hitung item_details
         const itemDetails = carts.map(item => {
             const customMaterialTotal = item.customMaterials?.reduce((sum, m) =>
                 sum + (m.price * m.quantity), 0
@@ -49,7 +47,6 @@ const createOrderHandler = async (request, h) => {
             };
         });
 
-        // Tambah ongkir
         if (ongkir) {
             itemDetails.push({
                 id: "ONGKIR",
@@ -59,12 +56,10 @@ const createOrderHandler = async (request, h) => {
             });
         }
 
-        // Hitung total
         const grossAmount = itemDetails.reduce((sum, item) =>
             sum + (item.price * item.quantity), 0
         );
 
-        // Data order
         const orderData = {
             orderId,
             userId,
@@ -102,7 +97,6 @@ const createOrderHandler = async (request, h) => {
             midtransToken = transaction.token;
             midtransRedirectUrl = transaction.redirect_url;
 
-            // AUTO SETTLEMENT SANDBOX
             if (!snap.apiConfig.isProduction) {
                 try {
                     await core.transaction.approve(orderId);
@@ -114,7 +108,6 @@ const createOrderHandler = async (request, h) => {
             }
         }
 
-        // Simpan order
         await db.collection('orders').doc(orderId).set({
             ...orderData,
             midtransToken,
@@ -125,11 +118,13 @@ const createOrderHandler = async (request, h) => {
         const cartRefBase = db.collection('users').doc(userId).collection('cart');
         for (const cartItem of carts) {
             const cartDocRef = cartRefBase.doc(cartItem.cartId);
-            if (!cartItem.originalQuantity || cartItem.quantity >= cartItem.originalQuantity) {
-                // Hapus cart jika checkout semua
+
+            // Kalau originalQuantity tidak ada → hapus semua
+            const originalQty = cartItem.originalQuantity ?? cartItem.quantity;
+
+            if (cartItem.quantity >= originalQty) {
                 await cartDocRef.delete();
             } else {
-                // Update quantity jika checkout sebagian
                 await cartDocRef.update({
                     quantity: admin.firestore.FieldValue.increment(-cartItem.quantity)
                 });
@@ -147,6 +142,7 @@ const createOrderHandler = async (request, h) => {
         return h.response({ status: 'fail', message: error.message }).code(500);
     }
 };
+
 
 
 // ======== NOTIFIKASI MIDTRANS ========
