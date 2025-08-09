@@ -256,16 +256,28 @@ const updateOrderStatusHandler = async (request, h) => {
 const getOrdersHandler = async (request, h) => {
     try {
         const { userId } = request.params;
+        
         const snapshot = await db.collection('orders')
             .where('userId', '==', userId)
-            .get(); // ❌ Hilangkan orderBy untuk hindari index
+            .get(); // Tanpa orderBy, aman dari composite index
 
-        // Urutkan manual di sisi Node.js
+        if (snapshot.empty) {
+            return h.response([]).code(200); // Tidak ada order
+        }
+
         const orders = snapshot.docs
             .map(doc => {
                 const data = doc.data();
-                let paymentDisplay = '';
 
+                // Konversi createdAt ke Date object
+                let createdAtDate;
+                if (data.createdAt?.toDate) {
+                    createdAtDate = data.createdAt.toDate();
+                } else {
+                    createdAtDate = new Date(data.createdAt);
+                }
+
+                let paymentDisplay = '';
                 if (data.paymentMethod === 'midtrans') {
                     paymentDisplay = data.paymentChannel 
                         ? `${data.paymentChannel} ${data.paymentStatus === 'paid' ? 'Lunas' : 'Menunggu Pembayaran'}`
@@ -279,10 +291,10 @@ const getOrdersHandler = async (request, h) => {
                     totalPrice: data.totalPrice,
                     paymentDisplay,
                     status: data.status,
-                    createdAt: data.createdAt
+                    createdAt: createdAtDate
                 };
             })
-            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); // ✅ sort manual
+            .sort((a, b) => b.createdAt - a.createdAt); // Urutkan dari terbaru
 
         return h.response(orders).code(200);
     } catch (error) {
