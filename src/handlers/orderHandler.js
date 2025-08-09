@@ -285,21 +285,28 @@ const getOrdersHandler = async (request, h) => {
     }
 
     const orders = snapshot.docs.map(doc => {
-      const data = doc.data();
+  const data = doc.data();
+  return {
+    orderId: doc.id,
+    paymentMethod: data.paymentMethod || null,
+    paymentChannel: data.paymentChannel || null,
+    paymentStatus: data.paymentStatus || null,
+    status: data.status || null,
+    totalPrice: data.totalPrice || null,
+    midtransToken: data.midtransToken || null,
+    midtransRedirectUrl: data.midtransRedirectUrl || null,
+    bankNameFromUrl: data.bankNameFromUrl || null,
+    createdAt: data.createdAt || null
+  };
+});
 
-      return {
-        orderId: doc.id,
-        paymentMethod: data.paymentMethod || null,
-        paymentChannel: data.paymentChannel || null,
-        paymentStatus: data.paymentStatus || null,
-        status: data.status || null,
-        totalPrice: data.totalPrice || null,
-        midtransToken: data.midtransToken || null,
-        midtransRedirectUrl: data.midtransRedirectUrl || null,
-        bankNameFromUrl: data.bankNameFromUrl || null,
-        createdAt: data.createdAt || null
-      };
-    });
+// 🔹 Sorting manual: terbaru di atas
+orders.sort((a, b) => {
+  const timeA = a.createdAt?._seconds || 0;
+  const timeB = b.createdAt?._seconds || 0;
+  return timeB - timeA;
+});
+
 
     return h
       .response({
