@@ -20,8 +20,6 @@ module.exports = [
         method: 'PATCH', // bisa pakai PUT juga, tapi PATCH lebih umum untuk update sebagian
         path: '/orders/status',
         handler: updateOrderStatusHandler,
-        options: {
-            auth: 'admin', // kalau mau hanya admin yang bisa update
-        }
+
     }
 ];
