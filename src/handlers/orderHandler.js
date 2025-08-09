@@ -286,10 +286,6 @@ const getOrdersHandler = async (request, h) => {
 
 
 
-
-
-
-
 module.exports = {
     createOrderHandler,
     midtransNotificationHandler,
