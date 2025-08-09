@@ -255,35 +255,38 @@ const updateOrderStatusHandler = async (request, h) => {
 
 const getOrdersHandler = async (request, h) => {
   try {
-    const { userId } = request.params;
+    const userId = request.auth?.credentials?.userId || request.params?.userId;
 
     if (!userId) {
       return h
         .response({
           status: "fail",
-          message: "User ID tidak ditemukan di parameter URL"
+          message: "User ID not found. Please login or provide ?userId="
         })
         .code(400);
     }
 
-    const snapshot = await db
-      .collection("orders")
-      .where("userId", "==", userId)
-      .orderBy("createdAt", "desc") // aman tanpa composite index kalau createdAt ada
-      .get();
+    let snapshot;
 
-    if (snapshot.empty) {
-      return h
-        .response({
-          status: "success",
-          message: "Tidak ada order untuk user ini",
-          data: []
-        })
-        .code(200);
+    try {
+      // Coba query dengan orderBy
+      snapshot = await db
+        .collection("orders")
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc")
+        .get();
+    } catch (err) {
+      console.warn("orderBy gagal, fallback tanpa sorting:", err.message);
+      // Kalau gagal (misalnya createdAt null atau butuh index), coba tanpa orderBy
+      snapshot = await db
+        .collection("orders")
+        .where("userId", "==", userId)
+        .get();
     }
 
     const orders = snapshot.docs.map(doc => {
       const data = doc.data();
+
       return {
         orderId: doc.id,
         paymentMethod: data.paymentMethod || null,
@@ -316,6 +319,7 @@ const getOrdersHandler = async (request, h) => {
       .code(500);
   }
 };
+
 
 
 
