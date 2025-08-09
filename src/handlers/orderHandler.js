@@ -254,42 +254,35 @@ const updateOrderStatusHandler = async (request, h) => {
 };
 
 const getOrdersHandler = async (request, h) => {
-  try {
-    const userId = request.auth.credentials.userId;
+    try {
+        const { userId } = request.params;
 
-    // Query hanya orderBy satu field untuk hindari composite index
-    const snapshot = await db
-      .collection("orders")
-      .where("userId", "==", userId)
-      .orderBy("createdAt", "desc")
-      .get();
+        const snapshot = await db.collection('orders')
+            .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .get();
 
-    const orders = snapshot.docs.map(doc => ({
-      orderId: doc.id,
-      ...doc.data()
-    }));
+        if (snapshot.empty) {
+            return h.response([]).code(200);
+        }
 
-    return h
-      .response({
-        status: "success",
-        message: "Orders retrieved",
-        data: orders
-      })
-      .code(200);
+        const orders = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                ...data,
+                createdAt: data.createdAt?.toDate
+                    ? data.createdAt.toDate().toISOString()
+                    : new Date(data.createdAt).toISOString()
+            };
+        });
 
-  } catch (error) {
-    console.error("Error getOrdersHandler:", error);
-    return h
-      .response({
-        status: "error",
-        message: "Failed to retrieve orders"
-      })
-      .code(500);
-  }
+        return h.response(orders).code(200);
+
+    } catch (error) {
+        console.error("Error getOrdersHandler:", error);
+        return h.response({ message: 'Gagal mengambil data order' }).code(500);
+    }
 };
-
-
-
 
 
 
