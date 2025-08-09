@@ -257,42 +257,24 @@ const getOrdersHandler = async (request, h) => {
     try {
         const { userId } = request.params;
 
-        const snapshot = await db.collection('orders').get();
+        const snapshot = await db.collection('orders')
+            .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .get();
 
         if (snapshot.empty) {
             return h.response([]).code(200);
         }
 
-        const orders = snapshot.docs
-            .map(doc => doc.data())
-            .filter(order => order.userId === userId)
-            .map(data => {
-                let createdAtDate = data.createdAt?.toDate
-                    ? data.createdAt.toDate()
-                    : new Date(data.createdAt);
-
-                let paymentDisplay = '';
-                const pm = data.paymentMethod?.toLowerCase();
-
-                if (pm === 'midtrans') {
-                    paymentDisplay = data.paymentChannel
-                        ? `${data.paymentChannel} ${data.paymentStatus === 'paid' ? 'Lunas' : 'Menunggu Pembayaran'}`
-                        : `Midtrans ${data.paymentStatus === 'paid' ? 'Lunas' : 'Menunggu Pembayaran'}`;
-                } else if (pm === 'cod') {
-                    paymentDisplay = 'COD';
-                } else {
-                    paymentDisplay = data.paymentMethod || '-';
-                }
-
-                return {
-                    orderId: data.orderId,
-                    totalPrice: data.totalPrice,
-                    paymentDisplay,
-                    status: data.status,
-                    createdAt: createdAtDate
-                };
-            })
-            .sort((a, b) => b.createdAt - a.createdAt);
+        const orders = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                ...data,
+                createdAt: data.createdAt?.toDate
+                    ? data.createdAt.toDate().toISOString()
+                    : new Date(data.createdAt).toISOString()
+            };
+        });
 
         return h.response(orders).code(200);
 
@@ -301,6 +283,7 @@ const getOrdersHandler = async (request, h) => {
         return h.response({ message: 'Gagal mengambil data order' }).code(500);
     }
 };
+
 
 
 
