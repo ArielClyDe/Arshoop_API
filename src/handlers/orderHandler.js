@@ -134,21 +134,20 @@ const createOrderHandler = async (request, h) => {
 // ======== NOTIFIKASI MIDTRANS ========
 // midtransNotificationHandler.js
 
-const midtransNotificationHandler = async (req, res) => {
+const midtransNotificationHandler = async (request, h) => {
   try {
     console.log("==== Midtrans Notification Diterima ====");
-    console.log("Headers:", req.headers);
-    console.log("Body:", JSON.stringify(req.body, null, 2));
+    console.log("Headers:", request.headers);
+    console.log("Body:", JSON.stringify(request.payload, null, 2));
 
-    const notificationJson = req.body;
+    const notificationJson = request.payload;
 
     const core = new midtransClient.CoreApi({
-      isProduction: false, // sandbox
+      isProduction: false,
       serverKey: process.env.MIDTRANS_SERVER_KEY,
       clientKey: process.env.MIDTRANS_CLIENT_KEY
     });
 
-    // Ambil status dari Midtrans
     const statusResponse = await core.transaction.notification(notificationJson);
 
     console.log("==== Status Response dari Midtrans ====");
@@ -162,7 +161,6 @@ const midtransNotificationHandler = async (req, res) => {
     console.log(`Transaction Status: ${transactionStatus}`);
     console.log(`Fraud Status: ${fraudStatus}`);
 
-    // Mapping status midtrans ke status di database
     let paymentStatus;
     if (transactionStatus === 'capture') {
       paymentStatus = (fraudStatus === 'accept') ? 'paid' : 'challenge';
@@ -176,11 +174,8 @@ const midtransNotificationHandler = async (req, res) => {
 
     console.log(`Mapped Payment Status: ${paymentStatus}`);
 
-    // Update Firestore
     if (paymentStatus) {
       const updateData = { paymentStatus };
-
-      // kalau paid, langsung ubah status jadi process
       if (paymentStatus === 'paid') {
         updateData.status = 'process';
       }
@@ -193,12 +188,14 @@ const midtransNotificationHandler = async (req, res) => {
       console.log(`Order ${orderId} diupdate menjadi:`, updateData);
     }
 
-    res.status(200).json({ message: 'Notification processed' });
+    return h.response({ message: 'Notification processed' }).code(200);
+
   } catch (err) {
     console.error("Error di midtransNotificationHandler:", err);
-    res.status(500).json({ error: err.message });
+    return h.response({ error: err.message }).code(500);
   }
 };
+
 
 
 
