@@ -255,27 +255,35 @@ const updateOrderStatusHandler = async (request, h) => {
 
 const getOrdersHandler = async (request, h) => {
   try {
-    // Ambil userId dari JWT atau query param (untuk debug/testing)
-    const userId = request.auth?.credentials?.userId || request.query.userId;
+    const { userId } = request.params;
 
     if (!userId) {
       return h
         .response({
           status: "fail",
-          message: "User ID not found. Please login or provide ?userId="
+          message: "User ID tidak ditemukan di parameter URL"
         })
-        .code(401);
+        .code(400);
     }
 
     const snapshot = await db
       .collection("orders")
       .where("userId", "==", userId)
-      .orderBy("createdAt", "desc") // tetap aman tanpa composite index
+      .orderBy("createdAt", "desc") // aman tanpa composite index kalau createdAt ada
       .get();
+
+    if (snapshot.empty) {
+      return h
+        .response({
+          status: "success",
+          message: "Tidak ada order untuk user ini",
+          data: []
+        })
+        .code(200);
+    }
 
     const orders = snapshot.docs.map(doc => {
       const data = doc.data();
-
       return {
         orderId: doc.id,
         paymentMethod: data.paymentMethod || null,
