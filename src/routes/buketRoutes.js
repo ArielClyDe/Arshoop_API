@@ -4,7 +4,8 @@ const {
   createBuketHandler,
   getAllBuketHandler,
   updateBuketHandler,
-  deleteBuketHandler
+  deleteBuketHandler,
+  updateBuketImageHandler  
 } = require('../handlers/buketHandler');
 
 module.exports = [
@@ -118,6 +119,37 @@ module.exports = [
     },
     handler: updateBuketHandler
   },
+
+   // ✅ Update gambar buket (khusus file upload)
+  {
+    method: 'PUT',
+    path: '/buket/{buketId}/image',
+    options: {
+      tags: ['api'],
+      description: 'Update gambar buket',
+      payload: {
+        output: 'stream',
+        parse: true,
+        allow: 'multipart/form-data',
+        multipart: true,
+        maxBytes: 5 * 1024 * 1024,
+      },
+      validate: {
+        params: Joi.object({
+          buketId: Joi.string().required()
+        }),
+        payload: Joi.object({
+          image: Joi.any().meta({ swaggerType: 'file' }).required()
+        }),
+        failAction: (request, h, err) => {
+          console.error('VALIDATION ERROR:', err.message);
+          throw err;
+        }
+      }
+    },
+    handler: updateBuketImageHandler
+  },
+
 
   // Hapus buket berdasarkan ID
   {

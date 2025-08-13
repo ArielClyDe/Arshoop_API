@@ -255,6 +255,54 @@ const updateBuketHandler = async (request, h) => {
   }
 };
 
+// ✅ Handler khusus update gambar
+const updateBuketImageHandler = async (request, h) => {
+  const { buketId } = request.params;
+  const image = request.payload.image;
+
+  try {
+    // baca stream -> buffer
+    const buffer = await new Promise((resolve, reject) => {
+      const chunks = [];
+      image.on('data', (c) => chunks.push(c));
+      image.on('end', () => resolve(Buffer.concat(chunks)));
+      image.on('error', reject);
+    });
+
+    // upload ke cloudinary (folder 'buket')
+    const uploadStream = () =>
+      new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: 'buket', resource_type: 'image' },
+          (error, result) => (error ? reject(error) : resolve(result))
+        );
+        streamifier.createReadStream(buffer).pipe(stream);
+      });
+
+    const result = await uploadStream();
+
+    // update field image_url di Firestore
+    await db.collection('buket').doc(buketId).update({
+      image_url: result.secure_url,
+      updated_at: new Date().toISOString()
+    });
+
+    return h
+      .response({
+        status: 'success',
+        message: 'Gambar diperbarui',
+        image_url: result.secure_url
+      })
+      .code(200);
+
+  } catch (err) {
+    console.error(err);
+    return h
+      .response({ status: 'fail', message: 'Gagal memperbarui gambar', error: err.message })
+      .code(500);
+  }
+};
+
 // DELETE
 const deleteBuketHandler = async (request, h) => {
   const { buketId } = request.params;
@@ -279,5 +327,6 @@ module.exports = {
   getAllBuketHandler,
   getBuketDetail,
   updateBuketHandler,
-  deleteBuketHandler
+  deleteBuketHandler,
+  updateBuketImageHandler
 };
