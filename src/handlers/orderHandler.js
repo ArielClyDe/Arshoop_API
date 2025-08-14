@@ -36,6 +36,7 @@ const toIso = (tsOrDate) => {
 };
 
 // ========== CREATE ORDER ==========
+// ======== BUAT ORDER ========
 const createOrderHandler = async (request, h) => {
   try {
     const {
@@ -45,50 +46,69 @@ const createOrderHandler = async (request, h) => {
       ongkir = 0,
       paymentMethod,
       deliveryMethod,
-      customer
-    } = request.payload || {};
+      customer, // <- abaikan dari client; kita override dari Firestore
+    } = request.payload;
 
-    if (!userId || !Array.isArray(carts) || carts.length === 0) {
-      return h.response({ status:'fail', message:'Data order tidak lengkap' }).code(400);
+    if (!userId || !carts || carts.length === 0) {
+      return h.response({ status: 'fail', message: 'Data order tidak lengkap' }).code(400);
     }
 
-    const normalizedPaymentMethod = String(paymentMethod || '').toLowerCase();
-    const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+    const normalizedPaymentMethod = paymentMethod?.toLowerCase();
+    const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-    // Hitung item details (termasuk custom materials)
-    const itemDetails = carts.map((item) => {
-      const customMaterialTotal = (item.customMaterials || []).reduce(
-        (sum, m) => sum + (Number(m.price||0) * Number(m.quantity||0)), 0);
+    // Hitung itemDetails & grossAmount seperti sebelumnya...
+    const itemDetails = carts.map(item => {
+      const customMaterialTotal = item.customMaterials?.reduce((sum, m) =>
+        sum + (m.price * m.quantity), 0
+      ) || 0;
+
       return {
         id: item.buketId,
-        price: Number(item.basePrice || 0) + customMaterialTotal,
-        quantity: Number(item.quantity || 0),
-        name: item.name || 'Item',
+        price: (item.basePrice || 0) + customMaterialTotal,
+        quantity: item.quantity || 1,
+        name: item.name || "Item"
       };
     });
 
     if (ongkir) {
-      itemDetails.push({ id:'ONGKIR', price:Number(ongkir), quantity:1, name:'Ongkos Kirim' });
+      itemDetails.push({ id: "ONGKIR", price: ongkir, quantity: 1, name: "Ongkos Kirim" });
     }
 
-    const grossAmount = itemDetails.reduce((sum, it) => sum + (Number(it.price)*Number(it.quantity)), 0);
+    const grossAmount = itemDetails.reduce((s, it) => s + (it.price * it.quantity), 0);
+
+    // >>> Ambil profil user dari Firestore
+    let customerFromFirestore = null;
+    try {
+      const userSnap = await db.collection('users').doc(userId).get();
+      if (userSnap.exists) {
+        const u = userSnap.data() || {};
+        customerFromFirestore = {
+          name:  u.name  || customer?.name  || "User",
+          email: u.email || customer?.email || "user@example.com",
+          phone: u.no_telp || customer?.phone || ""
+        };
+      }
+    } catch (e) {
+      console.warn("Gagal baca users/", userId, ":", e.message);
+    }
 
     const orderData = {
       orderId,
       userId,
       carts,
-      alamat: alamat || '',
-      ongkir: Number(ongkir || 0),
+      alamat,
+      ongkir,
       totalPrice: grossAmount,
       paymentMethod: normalizedPaymentMethod,
       paymentChannel: normalizedPaymentMethod === 'midtrans' ? null : 'COD',
-      deliveryMethod: deliveryMethod || 'delivery',
+      deliveryMethod,
       status: 'pending',
       paymentStatus: normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
       createdAt: admin.firestore.Timestamp.now(),
-      customer: customer || null, // ⬅️ penting
+      customer: customerFromFirestore || (customer ?? null), // <- ini kuncinya
     };
 
+    // === Midtrans (seperti sebelumnya) ===
     let midtransToken = null;
     let midtransRedirectUrl = null;
 
@@ -96,44 +116,58 @@ const createOrderHandler = async (request, h) => {
       const midtransParams = {
         transaction_details: { order_id: orderId, gross_amount: grossAmount },
         customer_details: {
-          first_name: customer?.name || 'User',
-          email: customer?.email || 'user@example.com',
-          phone: customer?.phone || '',
-          shipping_address: { address: alamat || '' },
+          first_name: orderData.customer?.name || "User",
+          email: orderData.customer?.email || "user@example.com",
+          phone: orderData.customer?.phone || "",
+          shipping_address: { address: alamat },
         },
-        item_details: itemDetails,
+        item_details: itemDetails
       };
 
-      const tx = await snap.createTransaction(midtransParams);
-      midtransToken = tx.token;
-      midtransRedirectUrl = tx.redirect_url;
+      const transaction = await snap.createTransaction(midtransParams);
+      midtransToken = transaction.token;
+      midtransRedirectUrl = transaction.redirect_url;
+
+      if (!snap.apiConfig.isProduction) {
+        try {
+          await core.transaction.approve(orderId);
+          console.log(`SANDBOX: Order ${orderId} auto-approve paid`);
+          orderData.paymentStatus = 'paid';
+          orderData.status = 'process';
+        } catch (err) {
+          console.error("Gagal auto-approve sandbox:", err.message);
+        }
+      }
     }
 
     await db.collection('orders').doc(orderId).set({
-      ...orderData, midtransToken, midtransRedirectUrl,
+      ...orderData,
+      midtransToken,
+      midtransRedirectUrl,
     });
 
-    // Hapus cart yang dipakai
+    // Hapus carts (tetap seperti kode kamu sebelumnya) ...
     const batch = db.batch();
     for (const cartItem of carts) {
-      const cartId = cartItem?.cartId;
-      if (!cartId) continue;
-      const ref = db.collection('carts').doc(cartId);
-      const snap = await ref.get();
-      if (snap.exists) batch.delete(ref);
+      if (!cartItem.cartId) continue;
+      const docRef = db.collection('carts').doc(cartItem.cartId);
+      const docSnap = await docRef.get();
+      if (docSnap.exists) batch.delete(docRef);
     }
     await batch.commit();
 
     return h.response({
-      status:'success',
-      message:'Order berhasil dibuat dan cart dihapus',
-      data:{ orderId, midtransToken, midtransRedirectUrl }
+      status: 'success',
+      message: 'Order berhasil dibuat',
+      data: { orderId, midtransToken, midtransRedirectUrl }
     }).code(201);
+
   } catch (error) {
     console.error('Error createOrderHandler:', error);
-    return h.response({ status:'fail', message:error.message }).code(500);
+    return h.response({ status: 'fail', message: error.message }).code(500);
   }
 };
+
 
 // ========== MIDTRANS NOTIFICATION ==========
 const midtransNotificationHandler = async (request, h) => {
