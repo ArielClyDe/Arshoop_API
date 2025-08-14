@@ -86,6 +86,7 @@ const createOrderHandler = async (request, h) => {
       status: 'pending',
       paymentStatus: normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
       createdAt: admin.firestore.Timestamp.now(),
+      customer: customer || null, // ⬅️ penting
     };
 
     let midtransToken = null;
