@@ -1,30 +1,34 @@
-const Hapi = require('@hapi/hapi');
+// routes/orders.js
 const {
-    createOrderHandler,
-    midtransNotificationHandler,
-    updateOrderStatusHandler,
-    getOrdersHandler
+  createOrderHandler,
+  midtransNotificationHandler,
+  getAllOrdersAdminHandler,
+  getOrdersByUserHandler,
+  getOrderDetailHandler,
+  updateOrderStatusByPathHandler,
+  updateOrderStatusLegacyHandler,
 } = require('../handlers/orderHandler');
 
+// NOTE: untuk sekarang tanpa auth. Nanti tinggal tambah pre: [requireAdmin]/[requireUser]
 module.exports = [
-    {
-        method: 'POST',
-        path: '/orders',
-        handler: createOrderHandler
-    },
-    {
-        method: 'POST',
-        path: '/midtrans/notification',
-        handler: midtransNotificationHandler
-    },
-    {
-        method: 'PATCH', // bisa pakai PUT juga, tapi PATCH lebih umum untuk update sebagian
-        path: '/orders/status',
-        handler: updateOrderStatusHandler,
-    },
-    {
-        method: 'GET',
-        path: '/orders/{userId}',
-        handler: getOrdersHandler
-    }
+  // Buat order
+  { method: 'POST', path: '/orders', handler: createOrderHandler },
+
+  // Webhook Midtrans
+  { method: 'POST', path: '/midtrans/notification', handler: midtransNotificationHandler },
+
+  // Admin: semua order (support ?status=&paymentStatus=&userId=&limit=)
+  { method: 'GET', path: '/orders', handler: getAllOrdersAdminHandler },
+
+  // User: list order miliknya
+  { method: 'GET', path: '/orders/{userId}', handler: getOrdersByUserHandler },
+
+  // Detail
+  { method: 'GET', path: '/orders/detail/{orderId}', handler: getOrderDetailHandler },
+
+  // Update status (path param)
+  { method: 'PATCH', path: '/orders/{orderId}/status', handler: updateOrderStatusByPathHandler },
+
+  // Update status (legacy body)
+  { method: 'PATCH', path: '/orders/status', handler: updateOrderStatusLegacyHandler },
 ];
