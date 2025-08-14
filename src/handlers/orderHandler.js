@@ -106,17 +106,6 @@ const createOrderHandler = async (request, h) => {
       const tx = await snap.createTransaction(midtransParams);
       midtransToken = tx.token;
       midtransRedirectUrl = tx.redirect_url;
-
-      // Sandbox: auto-approve biar langsung "paid"
-      if (!snap.apiConfig.isProduction) {
-        try {
-          await core.transaction.approve(orderId);
-          orderData.paymentStatus = 'paid';
-          orderData.status = 'processing';
-        } catch (err) {
-          console.warn('Sandbox auto-approve gagal:', err?.message);
-        }
-      }
     }
 
     await db.collection('orders').doc(orderId).set({
