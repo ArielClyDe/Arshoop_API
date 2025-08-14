@@ -129,15 +129,16 @@ const createOrderHandler = async (request, h) => {
       midtransRedirectUrl = transaction.redirect_url;
 
       if (!snap.apiConfig.isProduction) {
-        try {
-          await core.transaction.approve(orderId);
-          console.log(`SANDBOX: Order ${orderId} auto-approve paid`);
-          orderData.paymentStatus = 'paid';
-          orderData.status = 'process';
-        } catch (err) {
-          console.error("Gagal auto-approve sandbox:", err.message);
-        }
-      }
+            try {
+                await core.transaction.approve(orderId);
+                console.log(`SANDBOX: Order ${orderId} auto-approve paid`);
+                orderData.paymentStatus = 'paid';
+                orderData.status = 'processing'; // <- konsisten dg filter di app
+            } catch (err) {
+                console.error("Gagal auto-approve sandbox:", err.message);
+            }
+            }
+
     }
 
     await db.collection('orders').doc(orderId).set({
@@ -212,27 +213,63 @@ const getAllOrdersAdminHandler = async (request, h) => {
     const { status, paymentStatus, userId, limit = 25 } = request.query || {};
     let ref = db.collection('orders');
 
-    if (userId)       ref = ref.where('userId', '==', userId);
-    if (status)       ref = ref.where('status', '==', normalizeStatus(status));
-    if (paymentStatus)ref = ref.where('paymentStatus', '==', String(paymentStatus).toLowerCase());
+    if (userId)        ref = ref.where('userId', '==', userId);
+    if (status)        ref = ref.where('status', '==', normalizeStatus(status));
+    if (paymentStatus) ref = ref.where('paymentStatus', '==', String(paymentStatus).toLowerCase());
 
-    // supaya tidak perlu composite index, kita tidak pakai orderBy di query
     const snap = await ref.get();
 
-    const data = snap.docs
-      .map((d) => {
-        const x = d.data();
-        return { id: d.id, ...x, createdAt: toIso(x.createdAt) };
-      })
-      .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, Number(limit));
+    // Bentuk array awal
+    let rows = snap.docs.map(d => {
+      const x = d.data();
+      return { id: d.id, ...x, createdAt: toIso(x.createdAt) };
+    });
 
-    return h.response({ data }).code(200);
+    // Sort newest-first & batasi
+    rows = rows.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
+               .slice(0, Number(limit));
+
+    // Cari yang belum punya customer.name
+    const missing = rows.filter(r => !r.customer || !r.customer.name).map(r => r.userId);
+    const uniqueUserIds = Array.from(new Set(missing));
+
+    if (uniqueUserIds.length > 0) {
+      // Ambil profile user per id
+      const userDocs = await Promise.all(
+        uniqueUserIds.map(uid => db.collection('users').doc(uid).get())
+      );
+      const userMap = {};
+      userDocs.forEach((doc, idx) => {
+        const uid = uniqueUserIds[idx];
+        if (doc.exists) {
+          const u = doc.data() || {};
+          userMap[uid] = {
+            name:  u.name || 'User',
+            email: u.email || 'user@example.com',
+            phone: u.no_telp || ''
+          };
+        }
+      });
+
+      // Enrich rows (tanpa menulis balik ke DB; pure response)
+      rows = rows.map(r => {
+        if (!r.customer || !r.customer.name) {
+          const cu = userMap[r.userId];
+          if (cu) {
+            return { ...r, customer: cu };
+          }
+        }
+        return r;
+      });
+    }
+
+    return h.response({ data: rows }).code(200);
   } catch (err) {
     console.error('Error getAllOrdersAdminHandler:', err);
     return h.response({ message: 'Gagal mengambil data order' }).code(500);
   }
 };
+
 
 // ========== USER: GET ORDER MILIKNYA ==========
 const getOrdersByUserHandler = async (request, h) => {
@@ -261,12 +298,36 @@ const getOrderDetailHandler = async (request, h) => {
     const doc = await db.collection('orders').doc(orderId).get();
     if (!doc.exists) return h.response({ message:'Order tidak ditemukan' }).code(404);
     const data = doc.data();
-    return h.response({ data: { ...data, createdAt: toIso(data.createdAt) } }).code(200);
+
+    let out = { ...data, createdAt: toIso(data.createdAt) };
+
+    // Enrich kalau belum ada customer.name
+    if (!out.customer || !out.customer.name) {
+      try {
+        const udoc = await db.collection('users').doc(out.userId).get();
+        if (udoc.exists) {
+          const u = udoc.data() || {};
+          out = {
+            ...out,
+            customer: {
+              name:  u.name  || 'User',
+              email: u.email || 'user@example.com',
+              phone: u.no_telp || ''
+            }
+          };
+        }
+      } catch (e) {
+        console.warn('Gagal enrich customer di detail:', e.message);
+      }
+    }
+
+    return h.response({ data: out }).code(200);
   } catch (error) {
     console.error('Error getOrderDetailHandler:', error);
     return h.response({ message:'Gagal mengambil detail order' }).code(500);
   }
 };
+
 
 // ========== UPDATE STATUS (path param) ==========
 const updateOrderStatusByPathHandler = async (request, h) => {
