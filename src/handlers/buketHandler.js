@@ -1,12 +1,9 @@
-// handlers/buketHandler.js
 const { nanoid } = require('nanoid');
 const { db } = require('../services/firebaseService');
 const cloudinary = require('../services/cloudinaryService');
 const streamifier = require('streamifier');
 
-/* ========================= UTILITIES ========================= */
-
-// Hitung total base price per size dari daftar material
+// Fungsi bantu hitung total material
 const calculateBasePriceBySize = async (materialsBySize) => {
   const basePrice = {};
 
@@ -31,44 +28,6 @@ const calculateBasePriceBySize = async (materialsBySize) => {
 
   return basePrice;
 };
-
-// Cek apakah user punya order 'completed' yang berisi buket ini
-const hasCompletedOrderForBuket = async (userId, buketId) => {
-  // Asumsi koleksi: orders { userId, status, items: [{ buketId, ... }] }
-  const snap = await db.collection('orders')
-    .where('userId', '==', userId)
-    .where('status', '==', 'completed')
-    .get();
-
-  for (const doc of snap.docs) {
-    const items = doc.data().items || [];
-    if (items.some((it) => it.buketId === buketId)) return true;
-  }
-  return false;
-};
-
-// Update agregat rating (count/sum/avg) dalam transaksi
-const applyAggregate = async (buketId, deltaCount, deltaSum) => {
-  await db.runTransaction(async (tx) => {
-    const ref = db.collection('buket').doc(buketId);
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw new Error('Buket tidak ditemukan');
-
-    const data = snap.data();
-    const rating_count = (data.rating_count || 0) + deltaCount;
-    const rating_sum   = (data.rating_sum   || 0) + deltaSum;
-    const rating_avg   = rating_count > 0 ? +(rating_sum / rating_count).toFixed(2) : 0;
-
-    tx.update(ref, {
-      rating_count,
-      rating_sum,
-      rating_avg,
-      updated_at: new Date().toISOString(),
-    });
-  });
-};
-
-/* ========================= BUKET CRUD ========================= */
 
 // CREATE
 const createBuketHandler = async (request, h) => {
@@ -159,10 +118,6 @@ const createBuketHandler = async (request, h) => {
       base_price_by_size,
       total_price_by_size,
       created_at: new Date().toISOString(),
-      // init agregat review (tidak mengubah service lain)
-      rating_sum: 0,
-      rating_count: 0,
-      rating_avg: 0,
     };
 
     await db.collection('buket').doc(buketId).set(newBuket);
@@ -200,10 +155,7 @@ const getAllBuketHandler = async (request, h) => {
         service_price: data.service_price,
         base_price_by_size: data.base_price_by_size,
         total_price_by_size: data.total_price_by_size,
-        created_at: data.created_at,
-        // agregat review untuk card list
-        rating_avg: data.rating_avg || 0,
-        rating_count: data.rating_count || 0,
+        created_at: data.created_at
       };
     });
 
@@ -219,6 +171,7 @@ const getAllBuketHandler = async (request, h) => {
   }
 };
 
+// GET DETAIL
 // GET DETAIL (tanpa field 'materials')
 const getBuketDetail = async (request, h) => {
   const { buketId } = request.params;
@@ -241,7 +194,7 @@ const getBuketDetail = async (request, h) => {
       if (!materialDoc.exists) continue;
 
       const materialData = materialDoc.data();
-      const total = (materialData.price || 0) * (item.quantity || 0);
+      const total = materialData.price * item.quantity;
       totalPrice += total;
     }
 
@@ -268,10 +221,6 @@ const getBuketDetail = async (request, h) => {
         base_price_by_size: buketData.base_price_by_size,
         total_price_by_size: buketData.total_price_by_size,
         materialsBySize: buketData.materialsBySize,
-
-        // agregat review
-        rating_avg: buketData.rating_avg || 0,
-        rating_count: buketData.rating_count || 0,
       }
     }).code(200);
 
@@ -280,6 +229,8 @@ const getBuketDetail = async (request, h) => {
     return h.response({ message: 'Terjadi kesalahan.' }).code(500);
   }
 };
+
+
 
 // UPDATE
 const updateBuketHandler = async (request, h) => {
@@ -371,140 +322,11 @@ const deleteBuketHandler = async (request, h) => {
   }
 };
 
-/* ========================= REVIEWS API ========================= */
-
-// POST /buket/{buketId}/reviews
-const createReviewHandler = async (request, h) => {
-  const { buketId } = request.params;
-  const { rating, comment } = request.payload;
-
-  const userId = request.auth?.credentials?.userId || request.headers['x-user-id'];
-  if (!userId) return h.response({ status: 'fail', message: 'Unauthorized' }).code(401);
-
-  const allowed = await hasCompletedOrderForBuket(userId, buketId);
-  if (!allowed) {
-    return h.response({ status: 'fail', message: 'Anda hanya bisa mereview setelah pesanan selesai.' }).code(403);
-  }
-
-  // Cegah 2x review per user per buket
-  const exist = await db.collection('buket').doc(buketId).collection('reviews')
-    .where('userId', '==', userId).limit(1).get();
-  if (!exist.empty) {
-    return h.response({ status: 'fail', message: 'Anda sudah memberi review untuk buket ini.' }).code(409);
-  }
-
-  const reviewId = nanoid(16);
-  const now = new Date().toISOString();
-  const data = {
-    reviewId,
-    userId,
-    rating: Number(rating),
-    comment: (comment || '').toString().trim(),
-    created_at: now,
-    updated_at: now,
-  };
-
-  try {
-    await db.collection('buket').doc(buketId).collection('reviews').doc(reviewId).set(data);
-    await applyAggregate(buketId, +1, Number(rating));
-    return h.response({ status: 'success', data }).code(201);
-  } catch (e) {
-    console.error(e);
-    return h.response({ status: 'error', message: 'Gagal menyimpan review' }).code(500);
-  }
-};
-
-// GET /buket/{buketId}/reviews?limit=&after=
-const listReviewsHandler = async (request, h) => {
-  const { buketId } = request.params;
-  const { limit = 10, after } = request.query;
-
-  try {
-    let q = db.collection('buket').doc(buketId).collection('reviews')
-      .orderBy('created_at', 'desc').limit(Number(limit));
-
-    if (after) {
-      const cursor = await db.collection('buket').doc(buketId).collection('reviews').doc(after).get();
-      if (cursor.exists) q = q.startAfter(cursor);
-    }
-
-    const snap = await q.get();
-    const reviews = snap.docs.map(d => d.data());
-    const nextCursor = snap.docs.length ? snap.docs[snap.docs.length - 1].id : null;
-
-    return h.response({ status: 'success', data: { reviews, nextCursor } }).code(200);
-  } catch (e) {
-    console.error(e);
-    return h.response({ status: 'error', message: 'Gagal mengambil review' }).code(500);
-  }
-};
-
-// PUT /buket/{buketId}/reviews/{reviewId}
-const updateReviewHandler = async (request, h) => {
-  const { buketId, reviewId } = request.params;
-  const { rating, comment } = request.payload;
-
-  const userId = request.auth?.credentials?.userId || request.headers['x-user-id'];
-  if (!userId) return h.response({ status: 'fail', message: 'Unauthorized' }).code(401);
-
-  const ref = db.collection('buket').doc(buketId).collection('reviews').doc(reviewId);
-  const snap = await ref.get();
-  if (!snap.exists) return h.response({ status: 'fail', message: 'Review tidak ditemukan' }).code(404);
-  const me = snap.data();
-  if (me.userId !== userId) return h.response({ status: 'fail', message: 'Forbidden' }).code(403);
-
-  try {
-    const oldRating = Number(me.rating);
-    const newRating = rating != null ? Number(rating) : oldRating;
-
-    await ref.update({
-      rating: newRating,
-      comment: comment != null ? comment.toString().trim() : me.comment,
-      updated_at: new Date().toISOString(),
-    });
-
-    if (newRating !== oldRating) {
-      await applyAggregate(buketId, 0, newRating - oldRating);
-    }
-    return h.response({ status: 'success', message: 'Review diperbarui' }).code(200);
-  } catch (e) {
-    console.error(e);
-    return h.response({ status: 'error', message: 'Gagal memperbarui review' }).code(500);
-  }
-};
-
-// DELETE /buket/{buketId}/reviews/{reviewId}
-const deleteReviewHandler = async (request, h) => {
-  const { buketId, reviewId } = request.params;
-  const userId = request.auth?.credentials?.userId || request.headers['x-user-id'];
-  if (!userId) return h.response({ status: 'fail', message: 'Unauthorized' }).code(401);
-
-  const ref = db.collection('buket').doc(buketId).collection('reviews').doc(reviewId);
-  const snap = await ref.get();
-  if (!snap.exists) return h.response({ status: 'fail', message: 'Review tidak ditemukan' }).code(404);
-  const me = snap.data();
-  if (me.userId !== userId) return h.response({ status: 'fail', message: 'Forbidden' }).code(403);
-
-  try {
-    await ref.delete();
-    await applyAggregate(buketId, -1, -Number(me.rating));
-    return h.response({ status: 'success', message: 'Review dihapus' }).code(200);
-  } catch (e) {
-    console.error(e);
-    return h.response({ status: 'error', message: 'Gagal menghapus review' }).code(500);
-  }
-};
-
 module.exports = {
   createBuketHandler,
   getAllBuketHandler,
   getBuketDetail,
   updateBuketHandler,
   deleteBuketHandler,
-  updateBuketImageHandler,
-  // review handlers
-  createReviewHandler,
-  listReviewsHandler,
-  updateReviewHandler,
-  deleteReviewHandler
+  updateBuketImageHandler
 };
