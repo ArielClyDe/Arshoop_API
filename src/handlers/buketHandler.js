@@ -33,6 +33,7 @@ const calculateBasePriceBySize = async (materialsBySize) => {
   return basePrice;
 };
 
+
 // CREATE
 const createBuketHandler = async (request, h) => {
   const {
@@ -333,6 +334,23 @@ const deleteBuketHandler = async (request, h) => {
    doc fields: reviewId, buketId, reviewer_name, rating, comment, created_at
    buket.rating disimpan summary: {average, count}
    ========================= */
+// === Helper: hitung ulang ringkasan rating untuk satu buket ===
+async function recalcRatingSummary(buketId) {
+  const snap = await db.collection('buket_reviews').where('buketId', '==', buketId).get();
+  let sum = 0;
+  let count = 0;
+  snap.forEach((doc) => {
+    const r = doc.data() || {};
+    const val = parseInt(r.rating || 0, 10);
+    if (!Number.isNaN(val)) {
+      sum += val;
+      count += 1;
+    }
+  });
+  const average = count > 0 ? +(sum / count).toFixed(2) : 0;
+  return { average, count };
+}
+
 
 const createReviewHandler = async (request, h) => {
   const { buketId } = request.params;
