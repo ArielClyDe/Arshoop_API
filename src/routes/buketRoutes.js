@@ -1,4 +1,3 @@
-// routes/buket.js
 const Joi = require('joi');
 const {
   getBuketDetail,
@@ -8,11 +7,11 @@ const {
   deleteBuketHandler,
   updateBuketImageHandler,
   createReviewHandler,
-  getBuketReviewsHandler
+  getBuketReviewsHandler,
 } = require('../handlers/buketHandler');
 
 module.exports = [
-  // List semua buket
+  // Ambil semua buket
   {
     method: 'GET',
     path: '/buket',
@@ -23,7 +22,7 @@ module.exports = [
     handler: getAllBuketHandler
   },
 
-  // Detail buket + ringkasan rating
+  // Ambil detail buket berdasarkan ID dan ukuran
   {
     method: 'GET',
     path: '/buket/{buketId}',
@@ -42,7 +41,7 @@ module.exports = [
     handler: getBuketDetail
   },
 
-  // Create buket (multipart + materi)
+  // Tambah buket baru sekaligus upload gambar dan bahan
   {
     method: 'POST',
     path: '/buket',
@@ -65,9 +64,8 @@ module.exports = [
           requires_photo: Joi.boolean().required(),
           type: Joi.string().valid('template', 'custom').required(),
           image: Joi.any().meta({ swaggerType: 'file' }).required(),
-          materialsBySize: Joi.string().required(), // JSON string
+          materialsBySize: Joi.string().required(), // dikirim sebagai string JSON
           service_price: Joi.number().required(),
-          description: Joi.string().allow('', null)
         }),
         failAction: (request, h, err) => {
           console.error('VALIDATION ERROR:', err.message);
@@ -78,7 +76,7 @@ module.exports = [
     handler: createBuketHandler
   },
 
-  // Update buket
+  // Update buket berdasarkan ID
   {
     method: 'PUT',
     path: '/buket/{buketId}',
@@ -99,7 +97,6 @@ module.exports = [
           requires_photo: Joi.boolean(),
           service_price: Joi.number().integer().min(0),
           type: Joi.string().valid('template', 'custom'),
-          description: Joi.string().allow('', null),
           materialsBySize: Joi.object({
             small: Joi.array().items(Joi.object({
               materialId: Joi.string().required(),
@@ -124,7 +121,7 @@ module.exports = [
     handler: updateBuketHandler
   },
 
-  // Update gambar buket
+  // ✅ Update gambar buket (khusus file upload)
   {
     method: 'PUT',
     path: '/buket/{buketId}/image',
@@ -154,7 +151,7 @@ module.exports = [
     handler: updateBuketImageHandler
   },
 
-  // Hapus buket
+  // Hapus buket berdasarkan ID
   {
     method: 'DELETE',
     path: '/buket/{buketId}',
@@ -170,11 +167,7 @@ module.exports = [
     handler: deleteBuketHandler
   },
 
-  // ======================
-  // REVIEWS ROUTES
-  // ======================
-
-  // Tambah review untuk buket
+  /* ====== REVIEWS ====== */
   {
     method: 'POST',
     path: '/buket/{buketId}/reviews',
@@ -186,12 +179,12 @@ module.exports = [
           buketId: Joi.string().required()
         }),
         payload: Joi.object({
-          reviewer_name: Joi.string().required(),
+          reviewer_name: Joi.string().allow('', null),
           rating: Joi.number().integer().min(1).max(5).required(),
           comment: Joi.string().allow('', null)
         }),
         failAction: (request, h, err) => {
-          console.error('VALIDATION ERROR:', err.message);
+          console.error('[REVIEWS] VALIDATION ERROR:', err.message);
           throw err;
         }
       }
@@ -199,19 +192,21 @@ module.exports = [
     handler: createReviewHandler
   },
 
-  // Ambil semua review + ringkasan rating
   {
     method: 'GET',
     path: '/buket/{buketId}/reviews',
     options: {
       tags: ['api'],
-      description: 'Ambil review untuk buket',
+      description: 'Ambil review & ringkasan rating untuk buket',
       validate: {
         params: Joi.object({
           buketId: Joi.string().required()
+        }),
+        query: Joi.object({
+          limit: Joi.number().integer().min(1).max(200).default(50)
         })
       }
     },
     handler: getBuketReviewsHandler
-  }
+  },
 ];
