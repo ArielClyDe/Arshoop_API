@@ -336,13 +336,14 @@ const deleteBuketHandler = async (request, h) => {
 
 const createReviewHandler = async (request, h) => {
   const { buketId } = request.params;
-  const { reviewer_name, rating, comment } = request.payload || {};
+  const { user_id, reviewer_name, rating, comment } = request.payload || {};
+  logR('POST /buket/%s/reviews user=%s payload=%o', buketId, user_id, { reviewer_name, rating, comment });
 
-  logR('POST /buket/%s/reviews payload=%o', buketId, { reviewer_name, rating, comment });
-
-  // Validasi input
   if (!buketId) {
     return h.response({ status: 'fail', message: 'buketId wajib diisi.' }).code(400);
+  }
+  if (!user_id) {
+    return h.response({ status: 'fail', message: 'user_id wajib diisi.' }).code(400);
   }
   const rate = parseInt(rating);
   if (!(rate >= 1 && rate <= 5)) {
@@ -350,41 +351,69 @@ const createReviewHandler = async (request, h) => {
   }
 
   try {
-    // Cek buket ada
+    // 1) Pastikan buket ada
     const buketRef = db.collection('buket').doc(buketId);
     const buketDoc = await buketRef.get();
-
     if (!buketDoc.exists) {
-      logR('NOT FOUND buketId=%s (cek environment / base URL?)', buketId);
+      logR('NOT FOUND buketId=%s', buketId);
       return h.response({ status: 'fail', message: 'Buket tidak ditemukan.' }).code(404);
     }
 
-    // TODO: validasi user & status order selesai (kalau mau strict)
-    // misalnya: cek koleksi orders milik user, status=completed, mengandung buketId
+    // 2) Cegah duplikasi: sudah pernah review buket ini oleh user yang sama?
+    const dupSnap = await db.collection('buket_reviews')
+      .where('buketId', '==', buketId)
+      .where('userId', '==', user_id)
+      .limit(1)
+      .get();
 
-    // Simpan review
+    if (!dupSnap.empty) {
+      logR('DUPLICATE user=%s buket=%s', user_id, buketId);
+      return h.response({ status: 'fail', message: 'Anda sudah memberikan review untuk buket ini.' }).code(409);
+    }
+
+    // 3) (Opsional tapi direkomendasikan) Validasi user memang memiliki order SELESAI dengan buket ini
+    //    Jika belum siap, blok ini bisa di-comment sementara.
+    const doneStatuses = ['delivered', 'done', 'completed'];
+    const ordersSnap = await db.collection('orders')
+      .where('userId', '==', user_id)
+      .where('status', 'in', doneStatuses) // <= max 10 values OK
+      .get();
+
+    let hasCompletedOrder = false;
+    ordersSnap.forEach(doc => {
+      const d = doc.data() || {};
+      const carts = Array.isArray(d.carts) ? d.carts : [];
+      if (carts.some(it => it && it.buketId === buketId)) {
+        hasCompletedOrder = true;
+      }
+    });
+
+    if (!hasCompletedOrder) {
+      logR('FORBIDDEN user=%s belum punya order selesai untuk buket=%s', user_id, buketId);
+      return h.response({ status: 'fail', message: 'Review hanya dapat diberikan setelah pesanan selesai.' }).code(403);
+    }
+
+    // 4) Simpan review
     const reviewId = nanoid(16);
     const reviewData = {
       reviewId,
       buketId,
+      userId: user_id,                                  // << simpan jejak user
       reviewer_name: reviewer_name || 'User',
       rating: rate,
       comment: comment || null,
       created_at: new Date().toISOString(),
     };
-
     await db.collection('buket_reviews').doc(reviewId).set(reviewData);
-    logR('insert reviewId=%s buketId=%s', reviewId, buketId);
+    logR('insert reviewId=%s', reviewId);
 
-    // Hitung ulang summary
+    // 5) Recalc summary & update di dokumen buket
     const { average, count } = await recalcRatingSummary(buketId);
-
-    // Update summary di dokumen buket
     await buketRef.update({
       rating: { average, count },
       updated_at: new Date().toISOString(),
     });
-    logR('update summary buketId=%s avg=%s count=%s', buketId, average, count);
+    logR('summary updated avg=%s count=%s', average, count);
 
     return h.response({
       status: 'success',
@@ -398,18 +427,6 @@ const createReviewHandler = async (request, h) => {
   }
 };
 
-const recalcRatingSummary = async (buketId) => {
-  const snap = await db.collection('buket_reviews').where('buketId', '==', buketId).get();
-  let sum = 0;
-  let count = 0;
-  snap.forEach((doc) => {
-    const r = doc.data();
-    sum += parseInt(r.rating || 0);
-    count += 1;
-  });
-  const average = count > 0 ? +(sum / count).toFixed(2) : 0;
-  return { average, count };
-};
 
 const getBuketReviewsHandler = async (request, h) => {
   const { buketId } = request.params;

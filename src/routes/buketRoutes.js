@@ -168,7 +168,7 @@ module.exports = [
   },
 
   /* ====== REVIEWS ====== */
-  {
+    {
     method: 'POST',
     path: '/buket/{buketId}/reviews',
     options: {
@@ -179,6 +179,7 @@ module.exports = [
           buketId: Joi.string().required()
         }),
         payload: Joi.object({
+          user_id: Joi.string().required(),            // << WAJIB untuk cegah duplikasi
           reviewer_name: Joi.string().allow('', null),
           rating: Joi.number().integer().min(1).max(5).required(),
           comment: Joi.string().allow('', null)
