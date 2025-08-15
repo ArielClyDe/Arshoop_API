@@ -1,9 +1,12 @@
+// handlers/buketHandler.js
 const { nanoid } = require('nanoid');
 const { db } = require('../services/firebaseService');
 const cloudinary = require('../services/cloudinaryService');
 const streamifier = require('streamifier');
 
-// Fungsi bantu hitung total material
+// =========================
+// Helper: hitung base price
+// =========================
 const calculateBasePriceBySize = async (materialsBySize) => {
   const basePrice = {};
 
@@ -29,7 +32,9 @@ const calculateBasePriceBySize = async (materialsBySize) => {
   return basePrice;
 };
 
-// CREATE
+// ==============
+// CREATE BUKET
+// ==============
 const createBuketHandler = async (request, h) => {
   const {
     name,
@@ -117,6 +122,9 @@ const createBuketHandler = async (request, h) => {
       materialsBySize: parsedMaterials,
       base_price_by_size,
       total_price_by_size,
+      // field agregat review (diinisialisasi)
+      rating_count: 0,
+      rating_sum: 0,
       created_at: new Date().toISOString(),
     };
 
@@ -136,13 +144,19 @@ const createBuketHandler = async (request, h) => {
   }
 };
 
+// =============
 // GET ALL
+// =============
 const getAllBuketHandler = async (request, h) => {
   try {
     const snapshot = await db.collection('buket').get();
 
     const bukets = snapshot.docs.map(doc => {
       const data = doc.data();
+      const ratingCount = data.rating_count || 0;
+      const ratingSum = data.rating_sum || 0;
+      const ratingAvg = ratingCount > 0 ? Number((ratingSum / ratingCount).toFixed(2)) : 0;
+
       return {
         buketId: data.buketId,
         name: data.name,
@@ -155,7 +169,11 @@ const getAllBuketHandler = async (request, h) => {
         service_price: data.service_price,
         base_price_by_size: data.base_price_by_size,
         total_price_by_size: data.total_price_by_size,
-        created_at: data.created_at
+        created_at: data.created_at,
+        rating: {
+          average: ratingAvg,
+          count: ratingCount
+        }
       };
     });
 
@@ -171,8 +189,9 @@ const getAllBuketHandler = async (request, h) => {
   }
 };
 
-// GET DETAIL
-// GET DETAIL (tanpa field 'materials')
+// =======================
+// GET DETAIL (with rating)
+// =======================
 const getBuketDetail = async (request, h) => {
   const { buketId } = request.params;
   const { size = 'small' } = request.query;
@@ -184,7 +203,7 @@ const getBuketDetail = async (request, h) => {
     }
 
     const buketData = buketDoc.data();
-    const selectedSize = size.toLowerCase();
+    const selectedSize = String(size).toLowerCase();
     const selectedMaterials = buketData.materialsBySize?.[selectedSize] || [];
 
     let totalPrice = 0;
@@ -194,11 +213,15 @@ const getBuketDetail = async (request, h) => {
       if (!materialDoc.exists) continue;
 
       const materialData = materialDoc.data();
-      const total = materialData.price * item.quantity;
+      const total = (materialData.price || 0) * (item.quantity || 0);
       totalPrice += total;
     }
 
     const totalBuketPrice = totalPrice + (buketData.service_price || 0);
+
+    const ratingCount = buketData.rating_count || 0;
+    const ratingSum = buketData.rating_sum || 0;
+    const ratingAvg = ratingCount > 0 ? Number((ratingSum / ratingCount).toFixed(2)) : 0;
 
     return h.response({
       status: 'success',
@@ -217,10 +240,14 @@ const getBuketDetail = async (request, h) => {
         type: buketData.type,
         created_at: buketData.created_at,
 
-        // Tambahan untuk frontend:
         base_price_by_size: buketData.base_price_by_size,
         total_price_by_size: buketData.total_price_by_size,
         materialsBySize: buketData.materialsBySize,
+
+        rating: {
+          average: ratingAvg,
+          count: ratingCount
+        }
       }
     }).code(200);
 
@@ -230,9 +257,9 @@ const getBuketDetail = async (request, h) => {
   }
 };
 
-
-
-// UPDATE
+// ==============
+// UPDATE BUKET
+// ==============
 const updateBuketHandler = async (request, h) => {
   const { buketId } = request.params;
   const updateData = request.payload;
@@ -255,13 +282,14 @@ const updateBuketHandler = async (request, h) => {
   }
 };
 
-// ✅ Handler khusus update gambar
+// ===========================
+// UPDATE GAMBAR KHUSUS
+// ===========================
 const updateBuketImageHandler = async (request, h) => {
   const { buketId } = request.params;
   const image = request.payload.image;
 
   try {
-    // baca stream -> buffer
     const buffer = await new Promise((resolve, reject) => {
       const chunks = [];
       image.on('data', (c) => chunks.push(c));
@@ -269,7 +297,6 @@ const updateBuketImageHandler = async (request, h) => {
       image.on('error', reject);
     });
 
-    // upload ke cloudinary (folder 'buket')
     const uploadStream = () =>
       new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
@@ -281,7 +308,6 @@ const updateBuketImageHandler = async (request, h) => {
 
     const result = await uploadStream();
 
-    // update field image_url di Firestore
     await db.collection('buket').doc(buketId).update({
       image_url: result.secure_url,
       updated_at: new Date().toISOString()
@@ -303,7 +329,9 @@ const updateBuketImageHandler = async (request, h) => {
   }
 };
 
-// DELETE
+// =============
+// DELETE BUKET
+// =============
 const deleteBuketHandler = async (request, h) => {
   const { buketId } = request.params;
 
@@ -322,11 +350,106 @@ const deleteBuketHandler = async (request, h) => {
   }
 };
 
+// ============================
+// REVIEWS: CREATE & LIST
+// ============================
+const createReviewHandler = async (request, h) => {
+  const { buketId } = request.params;
+  const { reviewer_name, rating, comment } = request.payload;
+
+  try {
+    // pastikan buket ada
+    const buketRef = db.collection('buket').doc(buketId);
+    const buketSnap = await buketRef.get();
+    if (!buketSnap.exists) {
+      return h.response({ status: 'fail', message: 'Buket tidak ditemukan.' }).code(404);
+    }
+
+    const reviewId = nanoid(16);
+    const reviewData = {
+      reviewId,
+      buketId,
+      reviewer_name,
+      rating: Number(rating),
+      ...(comment ? { comment } : {}),
+      created_at: new Date().toISOString()
+    };
+
+    // transaksi: tulis review + update agregat di dokumen buket
+    await db.runTransaction(async (t) => {
+      const reviewRef = buketRef.collection('reviews').doc(reviewId);
+      t.set(reviewRef, reviewData);
+
+      const current = (await t.get(buketRef)).data() || {};
+      const nextCount = (current.rating_count || 0) + 1;
+      const nextSum = (current.rating_sum || 0) + Number(rating);
+      t.update(buketRef, {
+        rating_count: nextCount,
+        rating_sum: nextSum,
+        updated_at: new Date().toISOString()
+      });
+    });
+
+    return h.response({
+      status: 'success',
+      message: 'Review berhasil ditambahkan',
+      data: reviewData
+    }).code(201);
+  } catch (error) {
+    console.error(error);
+    return h.response({
+      status: 'fail',
+      message: 'Gagal menambahkan review',
+      error: error.message
+    }).code(500);
+  }
+};
+
+const getBuketReviewsHandler = async (request, h) => {
+  const { buketId } = request.params;
+
+  try {
+    // cek buket
+    const buketRef = db.collection('buket').doc(buketId);
+    const buketSnap = await buketRef.get();
+    if (!buketSnap.exists) {
+      return h.response({ status: 'fail', message: 'Buket tidak ditemukan.' }).code(404);
+    }
+
+    const reviewsSnap = await buketRef.collection('reviews').orderBy('created_at', 'desc').get();
+    const reviews = reviewsSnap.docs.map(d => d.data());
+
+    // ringkasan rating (pakai field agregat di dokumen buket)
+    const data = buketSnap.data();
+    const count = data.rating_count || 0;
+    const sum = data.rating_sum || 0;
+    const avg = count > 0 ? Number((sum / count).toFixed(2)) : 0;
+
+    return h.response({
+      status: 'success',
+      data: {
+        summary: { average: avg, count },
+        reviews
+      }
+    }).code(200);
+  } catch (error) {
+    console.error(error);
+    return h.response({
+      status: 'fail',
+      message: 'Gagal mengambil review'
+    }).code(500);
+  }
+};
+
 module.exports = {
+  // buket
   createBuketHandler,
   getAllBuketHandler,
   getBuketDetail,
   updateBuketHandler,
   deleteBuketHandler,
-  updateBuketImageHandler
+  updateBuketImageHandler,
+  // reviews
+  createReviewHandler,
+  getBuketReviewsHandler
 };
