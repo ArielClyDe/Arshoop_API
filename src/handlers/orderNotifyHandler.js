@@ -9,28 +9,23 @@ const STATUS_TEXT = {
   delivered: 'Pesanan sudah diterima',
   done: 'Pesanan selesai',
   completed: 'Pesanan selesai',
+  // NOTE: kalau adminmu pakai "canceled", tambahkan juga di sini & di Joi route!
 };
 
 async function updateOrderStatusHandler(request, h) {
   const { orderId } = request.params;
   const { status } = request.payload || {};
 
-  if (!status) {
-    return h.response({ status: 'fail', message: 'status required' }).code(400);
-  }
-
   const ref = db.collection('orders').doc(orderId);
   const snap = await ref.get();
-  if (!snap.exists) {
-    return h.response({ status: 'fail', message: 'Order not found' }).code(404);
-  }
+  if (!snap.exists) return h.response({ status:'fail', message:'Order not found' }).code(404);
 
   const order = snap.data();
   await ref.update({ status, updated_at: new Date().toISOString() });
 
-  // ambil token user
   const tokDoc = await db.collection('user_fcm_tokens').doc(order.userId).get();
   const tokens = tokDoc.exists ? (tokDoc.data().tokens || []) : [];
+  console.log('[NOTIFY] order', orderId, 'user', order.userId, 'tokens=', tokens.length);
 
   if (tokens.length) {
     const res = await sendToTokens(tokens, {
@@ -38,25 +33,10 @@ async function updateOrderStatusHandler(request, h) {
       body: STATUS_TEXT[status] || `Status: ${status}`,
       data: { type: 'order_status_update', orderId, status },
     });
-
-    // hapus token invalid (not-registered, invalid-argument, dll)
-    const invalid = [];
-    res.responses?.forEach((r, idx) => {
-      if (!r.success) {
-        const code = r.error?.code || '';
-        if (
-          code.includes('registration-token-not-registered') ||
-          code.includes('invalid-argument')
-        ) {
-          invalid.push(tokens[idx]);
-        }
-      }
-    });
-
-    if (invalid.length) {
-      await db.collection('user_fcm_tokens').doc(order.userId).update({
-        tokens: tokens.filter(t => !invalid.includes(t)),
-        updated_at: new Date().toISOString(),
+    console.log('[NOTIFY] send result success=', res.successCount, 'fail=', res.failureCount);
+    if (res.responses) {
+      res.responses.forEach((r, i) => {
+        if (!r.success) console.warn('[NOTIFY] token fail', i, r.error?.message);
       });
     }
   }
