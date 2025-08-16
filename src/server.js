@@ -9,6 +9,8 @@ const materialRoutes = require('./routes/materialRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const testRoutes = require('./routes/testRoutes');
 
+const fcmRoutes = require('./routes/fcmRoutes');
+
 
 
 
@@ -44,9 +46,11 @@ const init = async () => {
   ...testRoutes
 ]);
 
+    server.route(fcmRoutes);     
     await server.start();
     console.log(`✅ Server running at: ${server.info.uri}`);
     console.log('🔐 Midtrans Key:', process.env.MIDTRANS_SERVER_KEY);
+    
   } catch (err) {
     console.error('❌ Error saat inisialisasi server:', err);
   }

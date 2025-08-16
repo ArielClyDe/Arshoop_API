@@ -1,3 +1,4 @@
+// services/firebaseService.js
 const admin = require('firebase-admin');
 require('dotenv').config();
 
@@ -5,7 +6,7 @@ const serviceAccount = {
   type: process.env.FIREBASE_TYPE,
   project_id: process.env.FIREBASE_PROJECT_ID,
   private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-  private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
   client_email: process.env.FIREBASE_CLIENT_EMAIL,
   client_id: process.env.FIREBASE_CLIENT_ID,
   auth_uri: process.env.FIREBASE_AUTH_URI,
@@ -21,6 +22,8 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
-db.settings({ preferRest: true });
 
-module.exports = { db };
+// HAPUS baris ini (berpotensi tidak didukung):
+// db.settings({ preferRest: true });
+
+module.exports = { admin, db };
