@@ -27,13 +27,29 @@ async function updateOrderStatusHandler(request, h) {
   const tokens = tokDoc.exists ? (tokDoc.data().tokens || []) : [];
   console.log('[NOTIFY] order', orderId, 'user', order.userId, 'tokens=', tokens.length);
 
-  if (tokens.length) {
-    const fcmRes = await sendToTokens(tokens, {
+   if (tokens.length) {
+    const res = await sendToTokens(tokens, {
       title: 'Status Pesanan Diperbarui',
       body: STATUS_TEXT[status] || `Status: ${status}`,
       data: { type: 'order_status_update', orderId, status },
     });
-    console.log('[NOTIFY] sent:', fcmRes.successCount, 'ok,', fcmRes.failureCount, 'fail');
+    console.log('[NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
+
+    // hapus token invalid bila pakai fallback/hasil ada error
+    if (res.responses?.length) {
+      const bad = [];
+      res.responses.forEach((r, i) => {
+        const code = r?.error?.code || r?.error?.errorInfo?.code;
+        if (code === 'messaging/registration-token-not-registered') bad.push(tokens[i]);
+      });
+      if (bad.length) {
+        await db.collection('user_fcm_tokens').doc(order.userId).set({
+          tokens: admin.firestore.FieldValue.arrayRemove(...bad),
+          updated_at: new Date().toISOString(),
+        }, { merge: true });
+        console.log('[NOTIFY] removed invalid tokens:', bad.length);
+      }
+    }
   }
   return h.response({ status: 'success' }).code(200);
 }
