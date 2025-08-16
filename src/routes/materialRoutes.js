@@ -22,20 +22,21 @@ module.exports = [
           type: Joi.string().valid('Bunga', 'Snack', 'Photo', 'Boneka', 'Lainnya').required(),
           price: Joi.number().integer().required(),
           image: Joi.any().required(),
+          // opsional; di handler akan di-set otomatis berdasarkan type
+          requires_photo: Joi.boolean().optional(),
         }),
-        failAction: (request, h, err) => {
-          return h
+        failAction: (request, h, err) =>
+          h
             .response({
               status: 'fail',
               message: 'Validasi input gagal',
-              error: err.details[0].message,
+              error: err.details?.[0]?.message || err.message,
             })
             .code(400)
-            .takeover();
-        },
+            .takeover(),
       },
       handler: materialHandler.addMaterialHandler,
-    }
+    },
   },
 
   // GET all materials
@@ -46,7 +47,7 @@ module.exports = [
       tags: ['api'],
       description: 'Mengambil semua data material',
       handler: materialHandler.getAllMaterialsHandler,
-    }
+    },
   },
 
   // UPDATE material
@@ -72,20 +73,20 @@ module.exports = [
           type: Joi.string().valid('Bunga', 'Snack', 'Photo', 'Boneka', 'Lainnya').optional(),
           price: Joi.number().integer().optional(),
           image: Joi.any().optional(),
+          requires_photo: Joi.boolean().optional(),
         }),
-        failAction: (request, h, err) => {
-          return h
+        failAction: (request, h, err) =>
+          h
             .response({
               status: 'fail',
               message: 'Validasi input gagal',
-              error: err.details[0].message,
+              error: err.details?.[0]?.message || err.message,
             })
             .code(400)
-            .takeover();
-        },
+            .takeover(),
       },
       handler: materialHandler.updateMaterialHandler,
-    }
+    },
   },
 
   // DELETE material
@@ -99,18 +100,17 @@ module.exports = [
         params: Joi.object({
           materialId: Joi.string().required(),
         }),
-        failAction: (request, h, err) => {
-          return h
+        failAction: (request, h, err) =>
+          h
             .response({
               status: 'fail',
               message: 'Validasi input gagal',
-              error: err.details[0].message,
+              error: err.details?.[0]?.message || err.message,
             })
             .code(400)
-            .takeover();
-        },
+            .takeover(),
       },
       handler: materialHandler.deleteMaterialHandler,
-    }
+    },
   },
 ];
