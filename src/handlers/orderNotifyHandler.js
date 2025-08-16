@@ -1,5 +1,5 @@
 // handlers/orderNotifyHandler.js
-const { db } = require('../services/firebaseService');
+const { db, admin } = require('../services/firebaseService'); // ⬅️ tambahkan admin di import
 const { sendToTokens } = require('../services/fcmService');
 
 const STATUS_TEXT = {
@@ -9,7 +9,6 @@ const STATUS_TEXT = {
   delivered: 'Pesanan sudah diterima',
   done: 'Pesanan selesai',
   completed: 'Pesanan selesai',
-  // NOTE: kalau adminmu pakai "canceled", tambahkan juga di sini & di Joi route!
 };
 
 async function updateOrderStatusHandler(request, h) {
@@ -18,7 +17,7 @@ async function updateOrderStatusHandler(request, h) {
 
   const ref = db.collection('orders').doc(orderId);
   const snap = await ref.get();
-  if (!snap.exists) return h.response({ status:'fail', message:'Order not found' }).code(404);
+  if (!snap.exists) return h.response({ status: 'fail', message: 'Order not found' }).code(404);
 
   const order = snap.data();
   await ref.update({ status, updated_at: new Date().toISOString() });
@@ -27,7 +26,7 @@ async function updateOrderStatusHandler(request, h) {
   const tokens = tokDoc.exists ? (tokDoc.data().tokens || []) : [];
   console.log('[NOTIFY] order', orderId, 'user', order.userId, 'tokens=', tokens.length);
 
-   if (tokens.length) {
+  if (tokens.length) {
     const res = await sendToTokens(tokens, {
       title: 'Status Pesanan Diperbarui',
       body: STATUS_TEXT[status] || `Status: ${status}`,
@@ -35,22 +34,25 @@ async function updateOrderStatusHandler(request, h) {
     });
     console.log('[NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
 
-    // hapus token invalid bila pakai fallback/hasil ada error
+    // Bersihkan token invalid (jika ada)
     if (res.responses?.length) {
-      const bad = [];
+      const badTokens = [];
       res.responses.forEach((r, i) => {
         const code = r?.error?.code || r?.error?.errorInfo?.code;
-        if (code === 'messaging/registration-token-not-registered') bad.push(tokens[i]);
+        if (code === 'messaging/registration-token-not-registered') {
+          badTokens.push(tokens[i]);
+        }
       });
-      if (bad.length) {
+      if (badTokens.length) {
         await db.collection('user_fcm_tokens').doc(order.userId).set({
-          tokens: admin.firestore.FieldValue.arrayRemove(...bad),
+          tokens: admin.firestore.FieldValue.arrayRemove(...badTokens),
           updated_at: new Date().toISOString(),
         }, { merge: true });
-        console.log('[NOTIFY] removed invalid tokens:', bad.length);
+        console.log('[NOTIFY] removed invalid tokens:', badTokens.length);
       }
     }
   }
+
   return h.response({ status: 'success' }).code(200);
 }
 
