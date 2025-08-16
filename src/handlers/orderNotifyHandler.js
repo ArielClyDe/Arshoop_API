@@ -28,19 +28,13 @@ async function updateOrderStatusHandler(request, h) {
   console.log('[NOTIFY] order', orderId, 'user', order.userId, 'tokens=', tokens.length);
 
   if (tokens.length) {
-    const res = await sendToTokens(tokens, {
+    const fcmRes = await sendToTokens(tokens, {
       title: 'Status Pesanan Diperbarui',
       body: STATUS_TEXT[status] || `Status: ${status}`,
       data: { type: 'order_status_update', orderId, status },
     });
-    console.log('[NOTIFY] send result success=', res.successCount, 'fail=', res.failureCount);
-    if (res.responses) {
-      res.responses.forEach((r, i) => {
-        if (!r.success) console.warn('[NOTIFY] token fail', i, r.error?.message);
-      });
-    }
+    console.log('[NOTIFY] sent:', fcmRes.successCount, 'ok,', fcmRes.failureCount, 'fail');
   }
-
   return h.response({ status: 'success' }).code(200);
 }
 

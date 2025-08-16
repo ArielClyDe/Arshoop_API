@@ -1,30 +1,29 @@
 // services/fcmService.js
-const { admin } = require('./firebaseService');
+const { admin } = require('./firebaseService');   // ⬅️ pakai admin dari sini
 
-/**
- * Kirim notifikasi ke banyak token.
- * - title/body diisi → notifikasi muncul saat app background
- * - data wajib string
- */
 async function sendToTokens(tokens, { title, body, data = {} } = {}) {
   if (!Array.isArray(tokens) || tokens.length === 0) {
-    return { successCount: 0, failureCount: 0, responses: [] };
+    return { successCount: 0, failureCount: 0 };
   }
 
+  // pastikan semua value string (syarat FCM)
   const dataStr = {};
-  Object.entries(data).forEach(([k, v]) => (dataStr[k] = String(v)));
+  for (const [k, v] of Object.entries(data)) dataStr[k] = String(v);
 
-  const res = await admin.messaging().sendMulticast({
-    tokens,
+  // build batch messages
+  const messages = tokens.map((t) => ({
+    token: t,
     notification: title || body ? { title, body } : undefined,
     data: dataStr,
     android: {
       priority: 'high',
-      notification: { channelId: 'order_updates' }, // match channel di Android
+      notification: { channelId: 'order_updates' },
     },
-  });
+  }));
 
-  return res;
+  // ✅ kompatibel lintas versi admin SDK
+  const res = await admin.messaging().sendAll(messages, /*dryRun*/ false);
+  return res; // memiliki { successCount, failureCount, responses[] }
 }
 
 module.exports = { sendToTokens };
