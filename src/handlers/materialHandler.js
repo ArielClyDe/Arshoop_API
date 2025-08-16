@@ -2,11 +2,14 @@ const cloudinary = require('../services/cloudinaryService');
 const streamifier = require('streamifier');
 const firebaseService = require('../services/firebaseService');
 
+/* =========================
+   CREATE material
+   ========================= */
 const addMaterialHandler = async (request, h) => {
   const { name, type, price } = request.payload;
   const image = request.payload.image;
 
-  // --- Baca file upload ---
+  // --- Baca file upload utama (gambar material) ---
   let buffer;
   try {
     buffer = await new Promise((resolve, reject) => {
@@ -21,7 +24,7 @@ const addMaterialHandler = async (request, h) => {
       .code(400);
   }
 
-  // --- Upload Cloudinary ---
+  // --- Upload Cloudinary gambar material ---
   let uploadResult;
   try {
     const uploadStream = () =>
@@ -50,7 +53,7 @@ const addMaterialHandler = async (request, h) => {
       return h.response({ status: 'fail', message: 'price harus angka' }).code(400);
     }
 
-    const normalizedType = String(type).trim(); // enum kamu sudah membatasi nilainya
+    const normalizedType = String(type).trim();
     const newMaterial = {
       materialId,
       name,
@@ -59,7 +62,7 @@ const addMaterialHandler = async (request, h) => {
       image_url: uploadResult.secure_url,
       image_public_id: uploadResult.public_id,
       createdAt: new Date().toISOString(),
-      // true hanya untuk tipe Photo
+      // true hanya untuk tipe "Photo"
       requires_photo: normalizedType === 'Photo',
     };
 
@@ -75,12 +78,15 @@ const addMaterialHandler = async (request, h) => {
   }
 };
 
+/* =========================
+   LIST materials
+   ========================= */
 const getAllMaterialsHandler = async (_request, h) => {
   try {
     const snapshot = await firebaseService.db.collection('materials').get();
     const materials = snapshot.docs.map((doc) => {
       const d = doc.data();
-      // fallback untuk dokumen lama
+      // fallback untuk dokumen lama yang belum punya requires_photo
       if (typeof d.requires_photo === 'undefined') {
         d.requires_photo = d.type === 'Photo';
       }
@@ -95,6 +101,9 @@ const getAllMaterialsHandler = async (_request, h) => {
   }
 };
 
+/* =========================
+   DELETE material
+   ========================= */
 const deleteMaterialHandler = async (request, h) => {
   const { materialId } = request.params;
 
@@ -122,6 +131,9 @@ const deleteMaterialHandler = async (request, h) => {
   }
 };
 
+/* =========================
+   UPDATE material
+   ========================= */
 const updateMaterialHandler = async (request, h) => {
   const { materialId } = request.params;
   const { name, price, type: newType, requires_photo } = request.payload;
@@ -143,12 +155,10 @@ const updateMaterialHandler = async (request, h) => {
       type: newType ?? existingData.type,
     };
 
-    // Sinkronisasi requires_photo:
+    // Sinkronisasi requires_photo
     if (typeof requires_photo === 'boolean') {
-      // Jika user kirim flag, hormati input
       updatedFields.requires_photo = requires_photo;
     } else if (newType) {
-      // Jika type berubah & flag tidak dikirim → default berdasarkan type
       updatedFields.requires_photo = newType === 'Photo';
     }
 
@@ -194,9 +204,65 @@ const updateMaterialHandler = async (request, h) => {
   }
 };
 
+/* =========================
+   UPLOAD multi-foto untuk material "Photo"
+   (digunakan pelanggan saat menambahkan bahan Photo)
+   ========================= */
+const uploadMaterialPhotosHandler = async (request, h) => {
+  try {
+    let files = request.payload?.photos;
+    if (!files) {
+      return h.response({ status: 'fail', message: 'Field "photos" wajib diisi' }).code(400);
+    }
+    if (!Array.isArray(files)) files = [files];
+
+    const uploadOne = async (fileStream) => {
+      const buffer = await new Promise((resolve, reject) => {
+        const chunks = [];
+        fileStream.on('data', (c) => chunks.push(c));
+        fileStream.on('end', () => resolve(Buffer.concat(chunks)));
+        fileStream.on('error', reject);
+      });
+
+      const send = () =>
+        new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: 'user_photos', resource_type: 'image' }, // folder khusus foto pelanggan
+            (err, result) => (err ? reject(err) : resolve(result))
+          );
+          streamifier.createReadStream(buffer).pipe(stream);
+        });
+
+      const res = await send();
+      return {
+        url: res.secure_url,
+        public_id: res.public_id,
+        width: res.width,
+        height: res.height,
+        bytes: res.bytes,
+      };
+    };
+
+    const results = await Promise.all(files.map(uploadOne));
+
+    return h.response({
+      status: 'success',
+      message: 'Foto berhasil diupload',
+      data: results,
+    }).code(201);
+  } catch (err) {
+    return h.response({
+      status: 'fail',
+      message: 'Gagal upload foto',
+      error: err.message,
+    }).code(500);
+  }
+};
+
 module.exports = {
   addMaterialHandler,
   getAllMaterialsHandler,
   deleteMaterialHandler,
   updateMaterialHandler,
+  uploadMaterialPhotosHandler, // << baru
 };

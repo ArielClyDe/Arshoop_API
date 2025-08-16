@@ -22,8 +22,7 @@ module.exports = [
           type: Joi.string().valid('Bunga', 'Snack', 'Photo', 'Boneka', 'Lainnya').required(),
           price: Joi.number().integer().required(),
           image: Joi.any().required(),
-          // opsional; di handler akan di-set otomatis berdasarkan type
-          requires_photo: Joi.boolean().optional(),
+          requires_photo: Joi.boolean().optional(), // di handler akan di-set otomatis berdasar type
         }),
         failAction: (request, h, err) =>
           h
@@ -36,7 +35,7 @@ module.exports = [
             .takeover(),
       },
       handler: materialHandler.addMaterialHandler,
-    },
+    }
   },
 
   // GET all materials
@@ -47,7 +46,7 @@ module.exports = [
       tags: ['api'],
       description: 'Mengambil semua data material',
       handler: materialHandler.getAllMaterialsHandler,
-    },
+    }
   },
 
   // UPDATE material
@@ -86,7 +85,7 @@ module.exports = [
             .takeover(),
       },
       handler: materialHandler.updateMaterialHandler,
-    },
+    }
   },
 
   // DELETE material
@@ -111,6 +110,38 @@ module.exports = [
             .takeover(),
       },
       handler: materialHandler.deleteMaterialHandler,
+    }
+  },
+
+  // UPLOAD multi-foto untuk material "Photo"
+  {
+    method: 'POST',
+    path: '/materials/photos',
+    options: {
+      tags: ['api'],
+      description: 'Upload multi-foto pelanggan untuk material bertipe Photo',
+      payload: {
+        output: 'stream',
+        parse: true,
+        allow: 'multipart/form-data',
+        multipart: true,
+        maxBytes: 20 * 1024 * 1024, // 20MB total
+      },
+      validate: {
+        payload: Joi.object({
+          photos: Joi.any().required(), // boleh banyak; kirim field "photos" berulang
+        }),
+        failAction: (request, h, err) =>
+          h
+            .response({
+              status: 'fail',
+              message: 'Validasi input gagal',
+              error: err?.details?.[0]?.message || err.message,
+            })
+            .code(400)
+            .takeover(),
+      },
+      handler: materialHandler.uploadMaterialPhotosHandler,
     },
   },
 ];
