@@ -56,7 +56,6 @@ module.exports = [
           category: Joi.string().required(),
           is_customizable: Joi.boolean().required(),
           processing_time: Joi.alternatives().try(Joi.string(), Joi.number()).required(),
-          requires_photo: Joi.boolean().required(),
           type: Joi.string().valid('template', 'custom').required(),
           image: Joi.any().meta({ swaggerType: 'file' }).required(),
           materialsBySize: Joi.string().required(), // JSON string
@@ -84,7 +83,6 @@ module.exports = [
           image_url: Joi.string().uri(),
           is_customizable: Joi.boolean(),
           processing_time: Joi.alternatives().try(Joi.string(), Joi.number()),
-          requires_photo: Joi.boolean(),
           service_price: Joi.number().integer().min(0),
           type: Joi.string().valid('template', 'custom'),
           materialsBySize: Joi.object({

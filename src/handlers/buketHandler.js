@@ -32,8 +32,7 @@ const calculateBasePriceBySize = async (materialsBySize) => {
    ========================= */
 const createBuketHandler = async (request, h) => {
   const {
-    name, description, type, category,
-    requires_photo, is_customizable, processing_time, service_price
+    name, description, type, category, is_customizable, processing_time, service_price
   } = request.payload;
 
   const image = request.payload.image;
@@ -90,7 +89,6 @@ const createBuketHandler = async (request, h) => {
       ...(description !== undefined && { description }),
       type,
       category,
-      requires_photo: requires_photo === true || requires_photo === 'true',
       is_customizable: is_customizable === true || is_customizable === 'true',
       processing_time: parseInt(processing_time, 10),
       service_price: parseInt(service_price, 10),
@@ -123,7 +121,6 @@ const getAllBuketHandler = async (_req, h) => {
         image_url: x.image_url,
         is_customizable: x.is_customizable,
         processing_time: x.processing_time,
-        requires_photo: x.requires_photo,
         type: x.type,
         service_price: x.service_price,
         base_price_by_size: x.base_price_by_size,
@@ -171,7 +168,6 @@ const getBuketDetail = async (request, h) => {
         service_price: data.service_price,
         processing_time: data.processing_time,
         is_customizable: data.is_customizable,
-        requires_photo: data.requires_photo,
         type: data.type,
         created_at: data.created_at,
         rating: data.rating || { average: 0, count: 0 },
