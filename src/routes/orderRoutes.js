@@ -7,6 +7,7 @@ const {
   getOrderDetailHandler,
   updateOrderStatusByPathHandler,
   updateOrderStatusLegacyHandler,
+  downloadOrderPhotosZip,  
 } = require('../handlers/orderHandler');
 
 // NOTE: untuk sekarang tanpa auth. Nanti tinggal tambah pre: [requireAdmin]/[requireUser]
