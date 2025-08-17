@@ -23,37 +23,47 @@ async function updateOrderStatusHandler(request, h) {
   }
 
   const order = snap.data();
-
-  // update status di DB
   await ref.update({ status, updated_at: new Date().toISOString() });
 
-  // ambil token user
+  // ambil token milik user
   const tokDoc = await db.collection('user_fcm_tokens').doc(order.userId).get();
   const tokens = tokDoc.exists ? (tokDoc.data().tokens || []) : [];
   console.log('[NOTIFY] order', orderId, 'user', order.userId, 'tokens=', tokens.length);
 
   if (tokens.length) {
     const carts = Array.isArray(order.carts) ? order.carts : [];
-    const firstName = carts[0]?.name || '';                 // nama buket pertama (kalau ada)
-    const customerName = order.customer?.name || '';        // nama pelanggan (kalau ada)
 
-    // kirim notifikasi (title dipakai untuk collapsed default)
+    // Ambil semua nama buket (potong agar payload FCM tidak kebesaran)
+    const MAX_ITEMS = 5;          // tampilkan maksimal 5 baris
+    const MAX_NAME_LEN = 40;      // maksimal 40 char per nama agar ringkas
+    const namesAll = carts
+      .map(it => (it?.name || '').trim())
+      .filter(Boolean)
+      .map(s => (s.length > MAX_NAME_LEN ? s.slice(0, MAX_NAME_LEN) + '…' : s));
+
+    const namesTop = namesAll.slice(0, MAX_ITEMS);
+    const more = Math.max(namesAll.length - namesTop.length, 0);
+
+    const customerName = order?.customer?.name || ''; // jangan kirim userId
+
     const res = await sendToTokens(tokens, {
       title: 'Status Pesanan Diperbarui',
-      body: STATUS_TEXT[status] || `Status: ${status}`,
+      body:  STATUS_TEXT[status] || `Status: ${status}`, // collapsed default
       data: {
         type: 'order_status_update',
         orderId,
         status,
         status_text: STATUS_TEXT[status] || status,
         customer_name: customerName,
-        buket_name: firstName,
+        // JSON array string berisi list nama buket (untuk InboxStyle)
+        items_json: JSON.stringify(namesTop),
+        items_more: String(more), // sisa item jika > MAX_ITEMS
       },
     });
 
     console.log('[NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
 
-    // bersihkan token invalid (bila ada respons per token)
+    // bersihkan token invalid jika tersedia respon per-token
     if (res.responses?.length) {
       const bad = [];
       res.responses.forEach((r, i) => {
