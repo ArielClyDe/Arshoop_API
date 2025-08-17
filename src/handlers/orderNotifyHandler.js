@@ -33,9 +33,9 @@ async function updateOrderStatusHandler(request, h) {
   if (tokens.length) {
     const carts = Array.isArray(order.carts) ? order.carts : [];
 
-    // Ambil semua nama buket (potong agar payload FCM tidak kebesaran)
-    const MAX_ITEMS = 5;          // tampilkan maksimal 5 baris
-    const MAX_NAME_LEN = 40;      // maksimal 40 char per nama agar ringkas
+    // ringkas nama item agar payload kecil
+    const MAX_ITEMS = 5;
+    const MAX_NAME_LEN = 40;
     const namesAll = carts
       .map(it => (it?.name || '').trim())
       .filter(Boolean)
@@ -44,26 +44,29 @@ async function updateOrderStatusHandler(request, h) {
     const namesTop = namesAll.slice(0, MAX_ITEMS);
     const more = Math.max(namesAll.length - namesTop.length, 0);
 
-    const customerName = order?.customer?.name || ''; // jangan kirim userId
+    const customerName = order?.customer?.name || '';
 
-    const res = await sendToTokens(tokens, {
-      title: 'Status Pesanan Diperbarui',
-      body:  STATUS_TEXT[status] || `Status: ${status}`, // collapsed default
+    const payload = {
       data: {
         type: 'order_status_update',
         orderId,
         status,
         status_text: STATUS_TEXT[status] || status,
         customer_name: customerName,
-        // JSON array string berisi list nama buket (untuk InboxStyle)
         items_json: JSON.stringify(namesTop),
-        items_more: String(more), // sisa item jika > MAX_ITEMS
-      },
-    });
+        items_more: String(more),
 
+        // dipakai client sbg judul & collapsed text
+        _title: 'Status Pesanan Diperbarui',
+        _body:  STATUS_TEXT[status] || `Status: ${status}`,
+      },
+      android: { priority: 'high' }, // penting utk bg delivery
+    };
+
+    const res = await sendToTokens(tokens, payload);
     console.log('[NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
 
-    // bersihkan token invalid jika tersedia respon per-token
+    // bersihkan token invalid jika ada
     if (res.responses?.length) {
       const bad = [];
       res.responses.forEach((r, i) => {
