@@ -23,23 +23,24 @@ async function updateOrderStatusHandler(request, h) {
   }
 
   const order = snap.data();
+
+  // update status di DB
   await ref.update({ status, updated_at: new Date().toISOString() });
 
-  // Ambil token user
+  // ambil token user
   const tokDoc = await db.collection('user_fcm_tokens').doc(order.userId).get();
   const tokens = tokDoc.exists ? (tokDoc.data().tokens || []) : [];
   console.log('[NOTIFY] order', orderId, 'user', order.userId, 'tokens=', tokens.length);
 
   if (tokens.length) {
     const carts = Array.isArray(order.carts) ? order.carts : [];
-    const firstName = carts[0]?.name || '';                      // nama buket pertama
-    const customerName = (order.customer && order.customer.name)  // NAMA pelanggan
-      ? order.customer.name
-      : '';                                                      // jika tak ada, kosongkan (jangan pakai userId)
+    const firstName = carts[0]?.name || '';                 // nama buket pertama (kalau ada)
+    const customerName = order.customer?.name || '';        // nama pelanggan (kalau ada)
 
+    // kirim notifikasi (title dipakai untuk collapsed default)
     const res = await sendToTokens(tokens, {
       title: 'Status Pesanan Diperbarui',
-      body: STATUS_TEXT[status] || `Status: ${status}`, // hanya untuk collapsed default
+      body: STATUS_TEXT[status] || `Status: ${status}`,
       data: {
         type: 'order_status_update',
         orderId,
@@ -52,6 +53,7 @@ async function updateOrderStatusHandler(request, h) {
 
     console.log('[NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
 
+    // bersihkan token invalid (bila ada respons per token)
     if (res.responses?.length) {
       const bad = [];
       res.responses.forEach((r, i) => {
