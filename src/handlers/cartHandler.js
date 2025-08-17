@@ -261,29 +261,35 @@ const updateCartItemHandler = async (request, h) => {
     if (totalPrice !== undefined) toUpdate.totalPrice = totalPrice;
 
     // --- handle note + legacy url ---
-    let finalNote = orderNote !== undefined ? orderNote : old.orderNote || '';
-    let merged = Array.isArray(old.photoUrls) ? old.photoUrls : [];
+    let finalNote = (orderNote !== undefined) ? orderNote : (old.orderNote || '');
 
-    // Url yang nyangkut di note payload
+    // URL yang nyangkut di note payload → bersihkan & ambil url-nya
+    let urlsFromNote = [];
     if (orderNote && orderNote.includes('http')) {
       const { cleaned, urls } = extractPhotoUrls(orderNote);
       finalNote = cleaned || '';
-      merged = [...merged, ...urls];
+      urlsFromNote = urls;
     }
 
-    // Jika client ngirim photoUrls → REPLACE (dan tetap gabung dengan urls dari note kalau ada)
-    if (Array.isArray(photoUrls)) {
-      merged = [...photoUrls, ...merged];
-    }
+    // === REPLACE semantics ===
+    // jika client mengirim photoUrls → pakai itu sebagai basis,
+    // kalau tidak → pakai yang lama dari DB
+    let merged = Array.isArray(photoUrls)
+      ? [...photoUrls]
+      : Array.isArray(old.photoUrls)
+        ? [...old.photoUrls]
+        : [];
+
+    // tetap gabungkan dengan url hasil ekstraksi dari note (jika ada)
+    if (urlsFromNote.length) merged.push(...urlsFromNote);
 
     // unique
-    if (merged.length) {
-      merged = [...new Set(merged)];
-    }
+    if (merged.length) merged = [...new Set(merged)];
 
     toUpdate.orderNote = finalNote;
     toUpdate.photoUrls = merged;
     toUpdate.updated_at = new Date().toISOString();
+
 
     await cartRef.update(toUpdate);
 
