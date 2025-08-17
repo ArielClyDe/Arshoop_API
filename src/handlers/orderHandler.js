@@ -2,6 +2,19 @@
 const { db } = require('../services/firebaseService');
 const midtransClient = require('midtrans-client');
 const admin = require('firebase-admin');
+// TOP: tambahkan import
+const axios = require('axios');
+const archiver = require('archiver');
+const { PassThrough } = require('stream');
+
+// helper kecil buat ambil semua URL foto dari carts dan (legacy) note
+function extractPhotoUrlsFromText(note = '') {
+  const urlRegex = /(https?:\/\/\S+)/gi;
+  return (note.match(urlRegex) || []).filter((u) =>
+    /\.(jpg|jpeg|png|webp|gif)$/i.test(u) ||
+    u.toLowerCase().includes('res.cloudinary.com')
+  );
+}
 
 const snap = new midtransClient.Snap({
   isProduction: false,
@@ -374,6 +387,72 @@ const updateOrderStatusLegacyHandler = async (request, h) => {
   }
 };
 
+// === DOWNLOAD ZIP SEMUA FOTO DI ORDER ===
+const downloadOrderPhotosZip = async (request, h) => {
+  const { orderId } = request.params;
+
+  // ambil dokumen order
+  const doc = await db.collection('orders').doc(orderId).get();
+  if (!doc.exists) {
+    return h.response({ message: 'Order tidak ditemukan' }).code(404);
+  }
+
+  const data = doc.data() || {};
+  const carts = Array.isArray(data.carts) ? data.carts : [];
+
+  // kumpulkan semua URL foto dari setiap cart item
+  let urls = [];
+  carts.forEach((c, idx) => {
+    // sumber utama: field photoUrls
+    if (Array.isArray(c.photoUrls)) urls.push(...c.photoUrls);
+    // fallback legacy: link yang masih nempel di catatan
+    if (typeof c.orderNote === 'string' && c.orderNote.includes('http')) {
+      urls.push(...extractPhotoUrlsFromText(c.orderNote));
+    }
+  });
+
+  // unik & bersih
+  urls = Array.from(new Set(urls));
+  if (!urls.length) {
+    return h.response({ message: 'Tidak ada foto pada order ini.' }).code(404);
+  }
+
+  // siapkan stream ZIP
+  const pass = new PassThrough();
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.on('error', (err) => {
+    console.error('ZIP error:', err);
+    pass.emit('error', err);
+  });
+  archive.pipe(pass);
+
+  // tambahkan file ke zip (stream dari url)
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i];
+    const extMatch = url.match(/\.(jpg|jpeg|png|webp|gif)(\?|#|$)/i);
+    const ext = extMatch ? extMatch[1].toLowerCase() : 'jpg';
+    const filename = `order_${orderId}_photo_${String(i + 1).padStart(2, '0')}.${ext}`;
+
+    try {
+      const resp = await axios.get(url, { responseType: 'stream' });
+      archive.append(resp.data, { name: filename });
+    } catch (e) {
+      console.warn('Lewati url gagal diunduh:', url, e.message);
+    }
+  }
+
+  archive.finalize(); // mulai proses zip
+
+  // stream response zip
+  return h
+    .response(pass)
+    .type('application/zip')
+    .header(
+      'Content-Disposition',
+      `attachment; filename="order_${orderId}_photos.zip"`
+    );
+};
+
 module.exports = {
   createOrderHandler,
   midtransNotificationHandler,
@@ -382,4 +461,5 @@ module.exports = {
   getOrderDetailHandler,
   updateOrderStatusByPathHandler,
   updateOrderStatusLegacyHandler,
+  downloadOrderPhotosZip, // ⬅️ export baru
 };

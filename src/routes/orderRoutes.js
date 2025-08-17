@@ -31,4 +31,7 @@ module.exports = [
 
   // Update status (legacy body)
   { method: 'PATCH', path: '/orders/status', handler: updateOrderStatusLegacyHandler },
+
+  // ⬇️⬇️ baru: download ZIP semua foto pada order
+  { method: 'GET', path: '/orders/{orderId}/photos.zip', handler: downloadOrderPhotosZip },
 ];
