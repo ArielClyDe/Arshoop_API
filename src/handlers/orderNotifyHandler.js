@@ -25,46 +25,33 @@ async function updateOrderStatusHandler(request, h) {
   const order = snap.data();
   await ref.update({ status, updated_at: new Date().toISOString() });
 
-  // ambil token user
+  // Ambil token user
   const tokDoc = await db.collection('user_fcm_tokens').doc(order.userId).get();
   const tokens = tokDoc.exists ? (tokDoc.data().tokens || []) : [];
   console.log('[NOTIFY] order', orderId, 'user', order.userId, 'tokens=', tokens.length);
 
   if (tokens.length) {
-    // Nama customer untuk judul (fallback ke userId)
-    const customerName =
-      (order.customer && order.customer.name) ||
-      order.customerName ||
-      order.userName ||
-      order.userId ||
-      '';
-
-    // Ambil nama buket pertama untuk baris kedua
-    const items = Array.isArray(order.carts) ? order.carts : [];
-    const names = items.map(it => it?.name || '').filter(Boolean);
-    const buketFirst = names[0] || '';
-    const statusText = STATUS_TEXT[status] || status;
-
-    // body masih dikirim sebagai fallback (kalau device pakai notif payload)
-    const title = 'Status Pesanan Diperbarui';
-    const body  = `#${orderId} • ${buketFirst || 'Pesanan'} • ${statusText}`;
+    const carts = Array.isArray(order.carts) ? order.carts : [];
+    const firstName = carts[0]?.name || '';                      // nama buket pertama
+    const customerName = (order.customer && order.customer.name)  // NAMA pelanggan
+      ? order.customer.name
+      : '';                                                      // jika tak ada, kosongkan (jangan pakai userId)
 
     const res = await sendToTokens(tokens, {
-      title,
-      body,
+      title: 'Status Pesanan Diperbarui',
+      body: STATUS_TEXT[status] || `Status: ${status}`, // hanya untuk collapsed default
       data: {
         type: 'order_status_update',
         orderId,
         status,
-        status_text: statusText,        // dipakai client
-        customer_name: customerName,    // dipakai client (judul)
-        buket_name: buketFirst,         // dipakai client (baris 2)
+        status_text: STATUS_TEXT[status] || status,
+        customer_name: customerName,
+        buket_name: firstName,
       },
     });
 
     console.log('[NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
 
-    // bersihkan token invalid (kalau ada response per token)
     if (res.responses?.length) {
       const bad = [];
       res.responses.forEach((r, i) => {
