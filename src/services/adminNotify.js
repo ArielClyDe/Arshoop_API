@@ -5,6 +5,9 @@ const { sendToTokens } = require('./fcmService');
 // status pembayaran yang dianggap sukses
 const PAID_OK = new Set(['paid', 'settlement', 'capture_accept', 'capture-accept']);
 
+/**
+ * Ambil semua userId yang berperan admin.
+ */
 async function getAdminUserIds() {
   const ROLE_VALUES = ['admin', 'Admin', 'ADMIN'];
   try {
@@ -18,10 +21,16 @@ async function getAdminUserIds() {
       .map(d => d.id);
     if (ids.length) return ids;
   }
-  const envList = (process.env.ADMIN_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const envList = (process.env.ADMIN_USER_IDS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
   return envList;
 }
 
+/**
+ * Ambil FCM token untuk list user.
+ */
 async function getTokensForUsers(userIds = []) {
   if (!userIds.length) return [];
   const refs = userIds.map(uid => db.collection('user_fcm_tokens').doc(uid));
@@ -36,13 +45,18 @@ async function getTokensForUsers(userIds = []) {
 }
 
 /**
- * Kirim notif admin untuk order yang SUDAH BAYAR.
- * Panggil fungsi ini sesudah webhook Midtrans konfirmasi "paid", atau dari createOrder hanya untuk COD.
+ * Kirim notif admin untuk pesanan baru.
+ * Default: hanya kirim jika sudah bayar (Midtrans) → PAID_OK.
+ * Khusus COD: panggil dengan { force: true } dari createOrder.
  */
-async function notifyAdminsNewOrder(order) {
-  const pay = String(order?.paymentStatus || order?.midtransStatus || '').toLowerCase();
-  if (!PAID_OK.has(pay)) {
-    console.log('[ADMIN NOTIFY] skip (payment not paid yet):', pay);
+async function notifyAdminsNewOrder(order, opts = {}) {
+  const { force = false } = opts;
+
+  const payRaw = String(order?.paymentStatus || order?.midtransStatus || '').toLowerCase();
+  const isPaid = PAID_OK.has(payRaw);
+
+  if (!isPaid && !force) {
+    console.log('[ADMIN NOTIFY] skip (payment not paid yet):', payRaw);
     return { successCount: 0, failureCount: 0, responses: [] };
   }
 
@@ -65,11 +79,12 @@ async function notifyAdminsNewOrder(order) {
 
   const customerName = order?.customer?.name || order?.userId || '';
   const totalPrice   = String(order?.totalPrice ?? '');
+  const androidTag   = `admin_order_${order.orderId}`;
 
   const payload = {
     data: {
       type: 'admin_order_new',
-      orderId: order.orderId,
+      orderId: String(order.orderId),
       customer_name: customerName,
       total_price: totalPrice,
       items_json: JSON.stringify(namesTop),
@@ -77,7 +92,12 @@ async function notifyAdminsNewOrder(order) {
       _title: `Pesanan Baru #${order.orderId}`,
       _body:  `${customerName || 'Pelanggan'} • Total Rp ${totalPrice}`,
     },
-    android: { priority: 'high', ttl: 0 },
+    android: {
+      priority: 'high',
+      collapseKey: String(order.orderId),
+      notification: { channelId: 'admin_orders', tag: androidTag },
+      ttl: 60 * 60 * 1000,
+    },
   };
 
   const res = await sendToTokens(tokens, payload);
