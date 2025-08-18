@@ -2,40 +2,26 @@
 const { admin, db } = require('./firebaseService');
 const { sendToTokens } = require('./fcmService');
 
-/** Ambil daftar userId (uid) yang punya role admin dari koleksi 'users' */
+// status pembayaran yang dianggap sukses
+const PAID_OK = new Set(['paid', 'settlement', 'capture_accept', 'capture-accept']);
+
 async function getAdminUserIds() {
-  // Beberapa app menyimpan variasi "admin", "Admin", "ADMIN"
   const ROLE_VALUES = ['admin', 'Admin', 'ADMIN'];
-
-  // Gunakan whereIn (maks 10 nilai)
   try {
-    const qs = await db.collection('users')
-      .where('role', 'in', ROLE_VALUES)
-      .get();
-
+    const qs = await db.collection('users').where('role', 'in', ROLE_VALUES).get();
     const ids = qs.docs.map(d => d.id);
     if (ids.length) return ids;
-  } catch (e) {
-    // Kalau project Firestore versi lama (belum support whereIn), fallback: ambil semua lalu filter
+  } catch {
     const snap = await db.collection('users').get();
     const ids = snap.docs
-      .filter(d => {
-        const r = (d.data().role || '').toString().trim();
-        return ROLE_VALUES.includes(r);
-      })
+      .filter(d => ROLE_VALUES.includes(String(d.data().role || '').trim()))
       .map(d => d.id);
     if (ids.length) return ids;
   }
-
-  // Fallback terakhir: cek ENV
-  const envList = (process.env.ADMIN_USER_IDS || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  const envList = (process.env.ADMIN_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
   return envList;
 }
 
-/** Ambil token FCM untuk sekumpulan user admin dari koleksi user_fcm_tokens/{uid} */
 async function getTokensForUsers(userIds = []) {
   if (!userIds.length) return [];
   const refs = userIds.map(uid => db.collection('user_fcm_tokens').doc(uid));
@@ -44,22 +30,26 @@ async function getTokensForUsers(userIds = []) {
   snaps.forEach(s => {
     if (!s.exists) return;
     const arr = s.data()?.tokens || [];
-    arr.forEach(t => { if (t) all.push(String(t)); });
+    arr.forEach(t => t && all.push(String(t)));
   });
   return Array.from(new Set(all));
 }
 
-/** Kirim notifikasi ke semua admin saat ada order baru (DATA-ONLY) */
+/**
+ * Kirim notif admin untuk order yang SUDAH BAYAR.
+ * Panggil fungsi ini sesudah webhook Midtrans konfirmasi "paid", atau dari createOrder hanya untuk COD.
+ */
 async function notifyAdminsNewOrder(order) {
-  const adminIds = await getAdminUserIds();
-  if (!adminIds.length) {
-    console.log('[ADMIN NOTIFY] no admin user ids; skip');
+  const pay = String(order?.paymentStatus || order?.midtransStatus || '').toLowerCase();
+  if (!PAID_OK.has(pay)) {
+    console.log('[ADMIN NOTIFY] skip (payment not paid yet):', pay);
     return { successCount: 0, failureCount: 0, responses: [] };
   }
 
-  // Optional: kalau pembeli juga admin, jangan dikirimi notif admin
-  const targetAdminIds = adminIds.filter(uid => uid !== order.userId);
+  const adminIds = await getAdminUserIds();
+  if (!adminIds.length) return { successCount: 0, failureCount: 0, responses: [] };
 
+  const targetAdminIds = adminIds.filter(uid => uid !== order.userId);
   const tokens = await getTokensForUsers(targetAdminIds);
   console.log('[ADMIN NOTIFY] admins=', targetAdminIds.length, 'tokens=', tokens.length);
   if (!tokens.length) return { successCount: 0, failureCount: 0, responses: [] };
@@ -84,24 +74,15 @@ async function notifyAdminsNewOrder(order) {
       total_price: totalPrice,
       items_json: JSON.stringify(namesTop),
       items_more: String(more),
-
       _title: `Pesanan Baru #${order.orderId}`,
       _body:  `${customerName || 'Pelanggan'} • Total Rp ${totalPrice}`,
     },
-    android: { priority: 'high' },
+    android: { priority: 'high', ttl: 0 },
   };
 
   const res = await sendToTokens(tokens, payload);
   console.log('[ADMIN NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
-  // Tambah ini:
-    if (res.responses?.length) {
-    res.responses.forEach((r, i) => {
-        const status = r.success ? 'OK' : `FAIL (${r.error?.code || r.error?.errorInfo?.code || r.error?.message})`;
-        console.log(`[ADMIN NOTIFY] token[${i}]=${tokens[i].slice(0,12)}… -> ${status}`);
-    });
-    }
 
-  // Bersihkan token invalid
   if (res.responses?.length) {
     const bad = [];
     res.responses.forEach((r, i) => {

@@ -2,13 +2,13 @@
 const { db } = require('../services/firebaseService');
 const midtransClient = require('midtrans-client');
 const admin = require('firebase-admin');
-const { notifyAdminsNewOrder } = require('../services/adminNotify'); // ✅ NEW
-// TOP: tambahkan import
+const { notifyAdminsNewOrder } = require('../services/adminNotify');
+const { sendToTokens } = require('../services/fcmService'); // untuk push user cepat
 const axios = require('axios');
 const archiver = require('archiver');
 const { PassThrough } = require('stream');
 
-// helper kecil buat ambil semua URL foto dari carts dan (legacy) note
+// ===== Helpers kecil =====
 function extractPhotoUrlsFromText(note = '') {
   const urlRegex = /(https?:\/\/\S+)/gi;
   return (note.match(urlRegex) || []).filter((u) =>
@@ -17,6 +17,7 @@ function extractPhotoUrlsFromText(note = '') {
   );
 }
 
+// Midtrans clients
 const snap = new midtransClient.Snap({
   isProduction: false,
   serverKey: process.env.MIDTRANS_SERVER_KEY || '',
@@ -28,7 +29,6 @@ const core = new midtransClient.CoreApi({
   clientKey: process.env.MIDTRANS_CLIENT_KEY || '',
 });
 
-// --- utils ---
 const allowedStatuses = ['pending','processing','shipping','delivered','done','canceled'];
 
 const normalizeStatus = (s='') => {
@@ -49,8 +49,45 @@ const toIso = (tsOrDate) => {
   return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
 };
 
+// Teks ringkas status untuk push ke user
+const STATUS_TEXT = {
+  pending: 'Pesanan menunggu konfirmasi',
+  processing: 'Pesanan sedang diproses',
+  shipping: 'Pesanan sedang dikirim',
+  delivered: 'Pesanan sudah diterima',
+  done: 'Pesanan selesai',
+  completed: 'Pesanan selesai',
+  canceled: 'Pesanan dibatalkan',
+};
+
+// Kirim push cepat ke user (DATA-ONLY + priority: high + ttl: 0)
+async function pushUserStatus(userId, orderId, status, carts, customerName='') {
+  const tokDoc = await db.collection('user_fcm_tokens').doc(userId).get();
+  const tokens = tokDoc.exists ? (tokDoc.data().tokens || []) : [];
+  if (!tokens.length) return;
+
+  const names = (Array.isArray(carts) ? carts : [])
+    .map(it => (it?.name || '').trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  await sendToTokens(tokens, {
+    data: {
+      type: 'order_status_update',
+      orderId,
+      status,
+      status_text: STATUS_TEXT[status] || status,
+      customer_name: customerName || '',
+      items_json: JSON.stringify(names),
+      items_more: '0',
+      _title: 'Status Pesanan Diperbarui',
+      _body: STATUS_TEXT[status] || `Status: ${status}`,
+    },
+    android: { priority: 'high', ttl: 0 },
+  });
+}
+
 // ========== CREATE ORDER ==========
-// ======== BUAT ORDER ========
 const createOrderHandler = async (request, h) => {
   try {
     const {
@@ -60,22 +97,19 @@ const createOrderHandler = async (request, h) => {
       ongkir = 0,
       paymentMethod,
       deliveryMethod,
-      customer, // <- abaikan dari client; kita override dari Firestore
-      deliveryLat, 
+      customer, // bisa diabaikan—akan di-overwrite dari Firestore jika ada
+      deliveryLat,
       deliveryLng,
-
     } = request.payload || {};
 
     if (!userId || !Array.isArray(carts) || carts.length === 0) {
-      return h
-        .response({ status: 'fail', message: 'Data order tidak lengkap' })
-        .code(400);
+      return h.response({ status: 'fail', message: 'Data order tidak lengkap' }).code(400);
     }
 
-    const normalizedPaymentMethod = paymentMethod?.toLowerCase();
+    const normalizedPaymentMethod = (paymentMethod || '').toLowerCase();
     const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-    // --- Hitung itemDetails & grossAmount ---
+    // Hitung item_details & grossAmount
     const itemDetails = carts.map((item) => {
       const customMaterialTotal =
         item.customMaterials?.reduce(
@@ -92,12 +126,7 @@ const createOrderHandler = async (request, h) => {
     });
 
     if (ongkir) {
-      itemDetails.push({
-        id: 'ONGKIR',
-        price: Number(ongkir),
-        quantity: 1,
-        name: 'Ongkos Kirim',
-      });
+      itemDetails.push({ id: 'ONGKIR', price: Number(ongkir), quantity: 1, name: 'Ongkos Kirim' });
     }
 
     const grossAmount = itemDetails.reduce(
@@ -105,14 +134,14 @@ const createOrderHandler = async (request, h) => {
       0
     );
 
-    // --- Ambil profil user dari Firestore ---
+    // Ambil profil user dari Firestore
     let customerFromFirestore = null;
     try {
       const userSnap = await db.collection('users').doc(userId).get();
       if (userSnap.exists) {
         const u = userSnap.data() || {};
         customerFromFirestore = {
-          name: u.name || customer?.name || 'User',
+          name:  u.name || customer?.name || 'User',
           email: u.email || customer?.email || 'user@example.com',
           phone: (u.no_telp || customer?.phone || '').trim(),
         };
@@ -121,7 +150,7 @@ const createOrderHandler = async (request, h) => {
       console.warn('Gagal baca users/', userId, ':', e.message);
     }
 
-    // --- Susun dokumen order ---
+    // Draft dokumen order
     const orderData = {
       orderId,
       userId,
@@ -133,16 +162,15 @@ const createOrderHandler = async (request, h) => {
       paymentChannel: normalizedPaymentMethod === 'midtrans' ? null : 'COD',
       deliveryMethod,
       status: 'pending',
-      paymentStatus:
-        normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
+      paymentStatus: normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
       createdAt: admin.firestore.Timestamp.now(),
       customer: customerFromFirestore || (customer ?? null),
       // simpan koordinat hanya jika delivery
-      deliveryLat: deliveryMethod?.toLowerCase() === 'delivery' ? deliveryLat ?? null : null,
-      deliveryLng: deliveryMethod?.toLowerCase() === 'delivery' ? deliveryLng ?? null : null,
+      deliveryLat: deliveryMethod?.toLowerCase() === 'delivery' ? (deliveryLat ?? null) : null,
+      deliveryLng: deliveryMethod?.toLowerCase() === 'delivery' ? (deliveryLng ?? null) : null,
     };
 
-    // --- Midtrans (opsional, tergantung paymentMethod) ---
+    // Midtrans (opsional)
     let midtransToken = null;
     let midtransRedirectUrl = null;
 
@@ -162,30 +190,29 @@ const createOrderHandler = async (request, h) => {
       midtransToken = transaction.token;
       midtransRedirectUrl = transaction.redirect_url;
 
-      // Sandbox auto-approve (opsional)
+      // SANDBOX optional auto-approve
       if (core && snap && !snap.apiConfig.isProduction) {
         try {
           await core.transaction.approve(orderId);
           console.log(`SANDBOX: Order ${orderId} auto-approve paid`);
           orderData.paymentStatus = 'paid';
-          orderData.status = 'processing'; // sinkron dengan filter di app
+          orderData.status = 'processing'; // sinkron dg app
         } catch (err) {
           console.error('Gagal auto-approve sandbox:', err.message);
         }
       }
     }
 
-    // --- Simpan order ---
+    // Simpan order
     const orderDocToPersist = {
       ...orderData,
       midtransToken,
       midtransRedirectUrl,
       updatedAt: admin.firestore.Timestamp.now(),
     };
-
     await db.collection('orders').doc(orderId).set(orderDocToPersist);
 
-    // --- Hapus item carts user yang sudah jadi order ---
+    // Hapus item carts user yang sudah jadi order
     const batch = db.batch();
     for (const cartItem of carts) {
       if (!cartItem.cartId) continue;
@@ -195,38 +222,28 @@ const createOrderHandler = async (request, h) => {
     }
     await batch.commit();
 
-    // --- 🔔 KABARI ADMIN: pesanan baru (DATA-ONLY FCM) ---
-    // gunakan versi minimal yang dibutuhkan notifikasi admin
-    const orderDocForNotify = {
-      orderId,
-      userId,
-      carts,
-      totalPrice: orderData.totalPrice,
-      customer: orderData.customer,
-    };
+    // 🔔 Push cepat ke USER: status "pending"
+    pushUserStatus(userId, orderId, orderDocToPersist.status, carts, orderDocToPersist.customer?.name)
+      .catch(() => {});
 
-    notifyAdminsNewOrder(orderDocForNotify).catch((e) =>
-      console.error('notifyAdminsNewOrder error:', e)
-    );
+    // 🔔 Notif ADMIN:
+    // - COD => kirim sekarang
+    // - Midtrans => kirim hanya jika sudah auto-paid (sandbox); normalnya nanti via webhook
+    if (orderDocToPersist.paymentMethod !== 'midtrans' || orderDocToPersist.paymentStatus === 'paid') {
+      notifyAdminsNewOrder(orderDocToPersist).catch(e => console.error('notifyAdminsNewOrder error:', e));
+    }
 
-    // --- Response ke client ---
-    return h
-      .response({
-        status: 'success',
-        message: 'Order berhasil dibuat',
-        data: { orderId, midtransToken, midtransRedirectUrl },
-      })
-      .code(201);
+    // Response
+    return h.response({
+      status: 'success',
+      message: 'Order berhasil dibuat',
+      data: { orderId, midtransToken, midtransRedirectUrl },
+    }).code(201);
   } catch (error) {
     console.error('Error createOrderHandler:', error);
-    return h
-      .response({ status: 'fail', message: error.message })
-      .code(500);
+    return h.response({ status: 'fail', message: error.message }).code(500);
   }
 };
-
-module.exports = { createOrderHandler };
-
 
 // ========== MIDTRANS NOTIFICATION ==========
 const midtransNotificationHandler = async (request, h) => {
@@ -257,7 +274,19 @@ const midtransNotificationHandler = async (request, h) => {
     const updateData = { paymentStatus, paymentMethod:'midtrans', paymentChannel };
     if (paymentStatus === 'paid') updateData.status = 'processing';
 
-    await db.collection('orders').doc(orderId).update(updateData);
+    const ref = db.collection('orders').doc(orderId);
+    await ref.update(updateData);
+
+    // Ambil doc terbaru
+    const snapDoc = await ref.get();
+    const cur = snapDoc.data();
+
+    // Jika paid => kabari ADMIN & USER (status berubah "processing")
+    if (paymentStatus === 'paid') {
+      await notifyAdminsNewOrder({ ...cur, orderId });
+      await pushUserStatus(cur.userId, orderId, 'processing', cur.carts, cur?.customer?.name);
+    }
+
     return h.response({ message: 'Notification processed' }).code(200);
   } catch (err) {
     console.error('Error midtransNotificationHandler:', err);
@@ -284,8 +313,9 @@ const getAllOrdersAdminHandler = async (request, h) => {
     });
 
     // Sort newest-first & batasi
-    rows = rows.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
-               .slice(0, Number(limit));
+    rows = rows
+      .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, Number(limit));
 
     // Cari yang belum punya customer.name
     const missing = rows.filter(r => !r.customer || !r.customer.name).map(r => r.userId);
@@ -313,9 +343,7 @@ const getAllOrdersAdminHandler = async (request, h) => {
       rows = rows.map(r => {
         if (!r.customer || !r.customer.name) {
           const cu = userMap[r.userId];
-          if (cu) {
-            return { ...r, customer: cu };
-          }
+          if (cu) return { ...r, customer: cu };
         }
         return r;
       });
@@ -327,7 +355,6 @@ const getAllOrdersAdminHandler = async (request, h) => {
     return h.response({ message: 'Gagal mengambil data order' }).code(500);
   }
 };
-
 
 // ========== USER: GET ORDER MILIKNYA ==========
 const getOrdersByUserHandler = async (request, h) => {
@@ -386,7 +413,6 @@ const getOrderDetailHandler = async (request, h) => {
   }
 };
 
-
 // ========== UPDATE STATUS (path param) ==========
 const updateOrderStatusByPathHandler = async (request, h) => {
   try {
@@ -436,7 +462,6 @@ const updateOrderStatusLegacyHandler = async (request, h) => {
 const downloadOrderPhotosZip = async (request, h) => {
   const { orderId } = request.params;
 
-  // ambil dokumen order
   const doc = await db.collection('orders').doc(orderId).get();
   if (!doc.exists) {
     return h.response({ message: 'Order tidak ditemukan' }).code(404);
@@ -447,10 +472,8 @@ const downloadOrderPhotosZip = async (request, h) => {
 
   // kumpulkan semua URL foto dari setiap cart item
   let urls = [];
-  carts.forEach((c, idx) => {
-    // sumber utama: field photoUrls
+  carts.forEach((c) => {
     if (Array.isArray(c.photoUrls)) urls.push(...c.photoUrls);
-    // fallback legacy: link yang masih nempel di catatan
     if (typeof c.orderNote === 'string' && c.orderNote.includes('http')) {
       urls.push(...extractPhotoUrlsFromText(c.orderNote));
     }
@@ -486,9 +509,8 @@ const downloadOrderPhotosZip = async (request, h) => {
     }
   }
 
-  archive.finalize(); // mulai proses zip
+  archive.finalize();
 
-  // stream response zip
   return h
     .response(pass)
     .type('application/zip')
@@ -506,5 +528,5 @@ module.exports = {
   getOrderDetailHandler,
   updateOrderStatusByPathHandler,
   updateOrderStatusLegacyHandler,
-  downloadOrderPhotosZip, // ⬅️ export baru
+  downloadOrderPhotosZip,
 };
