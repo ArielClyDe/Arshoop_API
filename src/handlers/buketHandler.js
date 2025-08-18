@@ -38,48 +38,37 @@ const createBuketHandler = async (request, h) => {
   const image = request.payload.image;
   const materialsBySizeRaw = request.payload.materialsBySize;
 
-  // === 1) Handle image opsional untuk custom ===
-  let imageUrl = '';
-  if (image) {
-    // Baca stream file → Buffer
-    let buffer;
-    try {
-      buffer = await new Promise((resolve, reject) => {
-        const chunks = [];
-        image.on('data', (c) => chunks.push(c));
-        image.on('end', () => resolve(Buffer.concat(chunks)));
-        image.on('error', reject);
-      });
-    } catch (err) {
-      return h.response({ status: 'fail', message: 'Gagal membaca gambar', error: err.message }).code(400);
-    }
+  // Baca stream file → Buffer
+  let buffer;
+  try {
+    buffer = await new Promise((resolve, reject) => {
+      const chunks = [];
+      image.on('data', (c) => chunks.push(c));
+      image.on('end', () => resolve(Buffer.concat(chunks)));
+      image.on('error', reject);
+    });
+  } catch (err) {
+    return h.response({ status: 'fail', message: 'Gagal membaca gambar', error: err.message }).code(400);
+  }
 
-    // Upload ke Cloudinary
-    try {
-      const uploadStream = () =>
-        new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
-            { folder: 'buket', resource_type: 'image' },
-            (error, result) => (error ? reject(error) : resolve(result))
-          );
-          streamifier.createReadStream(buffer).pipe(stream);
-        });
-      const result = await uploadStream();
-      imageUrl = result.secure_url;
-    } catch (err) {
-      return h.response({ status: 'fail', message: 'Gagal upload gambar', error: err.message }).code(500);
-    }
-  } else {
-    // Jika template TETAP wajib ada gambar
-    if (type === 'template') {
-      return h.response({ status: 'fail', message: 'Gambar wajib untuk buket template' }).code(400);
-    }
-    // custom: biarkan kosong
-    imageUrl = '';
+  // Upload ke Cloudinary
+  let imageUrl;
+  try {
+    const uploadStream = () =>
+      new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: 'buket', resource_type: 'image' },
+          (error, result) => (error ? reject(error) : resolve(result))
+        );
+        streamifier.createReadStream(buffer).pipe(stream);
+      });
+    const result = await uploadStream();
+    imageUrl = result.secure_url;
+  } catch (err) {
+    return h.response({ status: 'fail', message: 'Gagal upload gambar', error: err.message }).code(500);
   }
 
   try {
-    // === 2) Parse & hitung harga ===
     let parsedMaterials;
     try {
       parsedMaterials = JSON.parse(materialsBySizeRaw);
@@ -87,15 +76,10 @@ const createBuketHandler = async (request, h) => {
       return h.response({ status: 'fail', message: 'materialsBySize bukan JSON valid', error: e.message }).code(400);
     }
 
-    // (Opsional) Validasi “custom hanya kertas” — sesuaikan field di koleksi materials jika perlu
-    // contoh: cek m.type === 'Kertas' atau m.category === 'Kertas'
-    // -> lewati jika belum ada skema konsisten di DB
-
     const base_price_by_size = await calculateBasePriceBySize(parsedMaterials);
-    const svc = parseInt(service_price || 0, 10) || 0;
     const total_price_by_size = {};
     for (const k in base_price_by_size) {
-      total_price_by_size[k] = base_price_by_size[k] + svc;
+      total_price_by_size[k] = base_price_by_size[k] + parseInt(service_price || 0, 10);
     }
 
     const buketId = nanoid(16);
@@ -108,8 +92,8 @@ const createBuketHandler = async (request, h) => {
       is_customizable: is_customizable === true || is_customizable === 'true',
       processing_time: parseInt(processing_time, 10),
       service_price: parseInt(service_price, 10),
-      image_url: imageUrl,                     // boleh kosong untuk custom
-      materialsBySize: parsedMaterials,        // berisi kertas saja untuk custom
+      image_url: imageUrl,
+      materialsBySize: parsedMaterials,
       base_price_by_size,
       total_price_by_size,
       rating: { average: 0, count: 0 },
@@ -202,47 +186,16 @@ const updateBuketHandler = async (request, h) => {
   const { buketId } = request.params;
   const updateData = request.payload || {};
   try {
-    const ref = db.collection('buket').doc(buketId);
-    const snap = await ref.get();
-    if (!snap.exists) {
-      return h.response({ status: 'fail', message: 'Buket tidak ditemukan' }).code(404);
-    }
-
-    const current = snap.data() || {};
-    const next = { ...updateData };
-    // normalisasi service_price ke integer jika dikirim
-    if (next.service_price !== undefined) {
-      next.service_price = parseInt(next.service_price, 10) || 0;
-    }
-
-    // === Recompute jika materialsBySize ATAU service_price berubah ===
-    const mustRecalc =
-      next.materialsBySize !== undefined || next.service_price !== undefined;
-
-    if (mustRecalc) {
-      // ambil bahan terbaru (prioritas dari payload, fallback ke current)
-      const materialsBySize = next.materialsBySize || current.materialsBySize || {};
-      const svc = next.service_price !== undefined ? next.service_price : (current.service_price || 0);
-
-      const base_price_by_size = await calculateBasePriceBySize(materialsBySize);
-      const total_price_by_size = {};
-      for (const k in base_price_by_size) {
-        total_price_by_size[k] = base_price_by_size[k] + (svc || 0);
-      }
-      next.base_price_by_size = base_price_by_size;
-      next.total_price_by_size = total_price_by_size;
-    }
-
-    next.updated_at = new Date().toISOString();
-    await ref.update(next);
+    await db.collection('buket').doc(buketId).update({
+      ...updateData,
+      updated_at: new Date().toISOString(),
+    });
     log('update', buketId);
-
     return h.response({ status: 'success', message: 'Buket berhasil diperbarui' }).code(200);
   } catch (err) {
     return h.response({ status: 'fail', message: 'Gagal memperbarui buket' }).code(500);
   }
 };
-
 
 const updateBuketImageHandler = async (request, h) => {
   const { buketId } = request.params;
