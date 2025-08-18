@@ -37,35 +37,48 @@ module.exports = [
   },
 
   // POST create buket
-  {
-    method: 'POST',
-    path: '/buket',
-    options: {
-      tags: ['api'],
-      description: 'Tambah buket baru',
-      payload: {
-        output: 'stream',
-        parse: true,
-        allow: 'multipart/form-data',
-        multipart: true,
-        maxBytes: 5 * 1024 * 1024,
-      },
-      validate: {
-        payload: Joi.object({
-          name: Joi.string().required(),
-          category: Joi.string().required(),
-          is_customizable: Joi.boolean().required(),
-          processing_time: Joi.alternatives().try(Joi.string(), Joi.number()).required(),
-          type: Joi.string().valid('template', 'custom').required(),
-          image: Joi.any().meta({ swaggerType: 'file' }).required(),
-          materialsBySize: Joi.string().required(), // JSON string
-          service_price: Joi.number().required(),
-        }),
-        failAction: (_r, _h, err) => { console.error('VALIDATION ERROR:', err.message); throw err; },
-      },
+{
+  method: 'POST',
+  path: '/buket',
+  options: {
+    tags: ['api'],
+    description: 'Tambah buket baru',
+    payload: {
+      output: 'stream',
+      parse: true,
+      allow: 'multipart/form-data',
+      multipart: true,
+      maxBytes: 5 * 1024 * 1024,
     },
-    handler: createBuketHandler,
+    validate: {
+      payload: Joi.object({
+        name: Joi.string().required(),
+        // category: wajib 'custom' kalau type 'custom', otherwise bebas (wajib isi)
+        category: Joi.alternatives().conditional('type', {
+          is: 'custom',
+          then: Joi.string().valid('custom').required(),
+          otherwise: Joi.string().required()
+        }),
+        is_customizable: Joi.boolean().required(),
+        processing_time: Joi.alternatives().try(Joi.string(), Joi.number()).required(),
+        type: Joi.string().valid('template', 'custom').required(),
+
+        // ⬇⬇⬇ image sekarang kondisional: wajib untuk template, opsional untuk custom
+        image: Joi.any().meta({ swaggerType: 'file' }).when('type', {
+          is: 'template',
+          then: Joi.required(),
+          otherwise: Joi.optional()
+        }),
+
+        // tetap: JSON string berisi materialsBySize
+        materialsBySize: Joi.string().required(),
+        service_price: Joi.number().required(),
+      }),
+      failAction: (_r, _h, err) => { console.error('VALIDATION ERROR:', err.message); throw err; },
+    },
   },
+  handler: createBuketHandler,
+},
 
   // PUT update buket
   {
