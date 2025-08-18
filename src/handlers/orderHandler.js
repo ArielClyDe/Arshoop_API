@@ -2,6 +2,7 @@
 const { db } = require('../services/firebaseService');
 const midtransClient = require('midtrans-client');
 const admin = require('firebase-admin');
+const { notifyAdminsNewOrder } = require('../services/adminNotify'); // ✅ NEW
 // TOP: tambahkan import
 const axios = require('axios');
 const archiver = require('archiver');
@@ -60,68 +61,82 @@ const createOrderHandler = async (request, h) => {
       paymentMethod,
       deliveryMethod,
       customer, // <- abaikan dari client; kita override dari Firestore
-    } = request.payload;
+    } = request.payload || {};
 
-    if (!userId || !carts || carts.length === 0) {
-      return h.response({ status: 'fail', message: 'Data order tidak lengkap' }).code(400);
+    if (!userId || !Array.isArray(carts) || carts.length === 0) {
+      return h
+        .response({ status: 'fail', message: 'Data order tidak lengkap' })
+        .code(400);
     }
 
     const normalizedPaymentMethod = paymentMethod?.toLowerCase();
     const orderId = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-    // Hitung itemDetails & grossAmount seperti sebelumnya...
-    const itemDetails = carts.map(item => {
-      const customMaterialTotal = item.customMaterials?.reduce((sum, m) =>
-        sum + (m.price * m.quantity), 0
-      ) || 0;
+    // --- Hitung itemDetails & grossAmount ---
+    const itemDetails = carts.map((item) => {
+      const customMaterialTotal =
+        item.customMaterials?.reduce(
+          (sum, m) => sum + (Number(m.price || 0) * Number(m.quantity || 0)),
+          0
+        ) || 0;
 
       return {
         id: item.buketId,
-        price: (item.basePrice || 0) + customMaterialTotal,
-        quantity: item.quantity || 1,
-        name: item.name || "Item"
+        price: Number(item.basePrice || 0) + customMaterialTotal,
+        quantity: Number(item.quantity || 1),
+        name: item.name || 'Item',
       };
     });
 
     if (ongkir) {
-      itemDetails.push({ id: "ONGKIR", price: ongkir, quantity: 1, name: "Ongkos Kirim" });
+      itemDetails.push({
+        id: 'ONGKIR',
+        price: Number(ongkir),
+        quantity: 1,
+        name: 'Ongkos Kirim',
+      });
     }
 
-    const grossAmount = itemDetails.reduce((s, it) => s + (it.price * it.quantity), 0);
+    const grossAmount = itemDetails.reduce(
+      (s, it) => s + (Number(it.price) * Number(it.quantity)),
+      0
+    );
 
-    // >>> Ambil profil user dari Firestore
+    // --- Ambil profil user dari Firestore ---
     let customerFromFirestore = null;
     try {
       const userSnap = await db.collection('users').doc(userId).get();
       if (userSnap.exists) {
         const u = userSnap.data() || {};
         customerFromFirestore = {
-          name:  u.name  || customer?.name  || "User",
-          email: u.email || customer?.email || "user@example.com",
-          phone: u.no_telp || customer?.phone || ""
+          name: u.name || customer?.name || 'User',
+          email: u.email || customer?.email || 'user@example.com',
+          phone: (u.no_telp || customer?.phone || '').trim(),
         };
       }
     } catch (e) {
-      console.warn("Gagal baca users/", userId, ":", e.message);
+      console.warn('Gagal baca users/', userId, ':', e.message);
     }
 
+    // --- Susun dokumen order ---
     const orderData = {
       orderId,
       userId,
       carts,
       alamat,
-      ongkir,
-      totalPrice: grossAmount,
+      ongkir: Number(ongkir || 0),
+      totalPrice: Number(grossAmount),
       paymentMethod: normalizedPaymentMethod,
       paymentChannel: normalizedPaymentMethod === 'midtrans' ? null : 'COD',
       deliveryMethod,
       status: 'pending',
-      paymentStatus: normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
+      paymentStatus:
+        normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
       createdAt: admin.firestore.Timestamp.now(),
-      customer: customerFromFirestore || (customer ?? null), // <- ini kuncinya
+      customer: customerFromFirestore || (customer ?? null),
     };
 
-    // === Midtrans (seperti sebelumnya) ===
+    // --- Midtrans (opsional, tergantung paymentMethod) ---
     let midtransToken = null;
     let midtransRedirectUrl = null;
 
@@ -129,38 +144,42 @@ const createOrderHandler = async (request, h) => {
       const midtransParams = {
         transaction_details: { order_id: orderId, gross_amount: grossAmount },
         customer_details: {
-          first_name: orderData.customer?.name || "User",
-          email: orderData.customer?.email || "user@example.com",
-          phone: orderData.customer?.phone || "",
+          first_name: orderData.customer?.name || 'User',
+          email: orderData.customer?.email || 'user@example.com',
+          phone: orderData.customer?.phone || '',
           shipping_address: { address: alamat },
         },
-        item_details: itemDetails
+        item_details: itemDetails,
       };
 
       const transaction = await snap.createTransaction(midtransParams);
       midtransToken = transaction.token;
       midtransRedirectUrl = transaction.redirect_url;
 
-      if (!snap.apiConfig.isProduction) {
-            try {
-                await core.transaction.approve(orderId);
-                console.log(`SANDBOX: Order ${orderId} auto-approve paid`);
-                orderData.paymentStatus = 'paid';
-                orderData.status = 'processing'; // <- konsisten dg filter di app
-            } catch (err) {
-                console.error("Gagal auto-approve sandbox:", err.message);
-            }
-            }
-
+      // Sandbox auto-approve (opsional)
+      if (core && snap && !snap.apiConfig.isProduction) {
+        try {
+          await core.transaction.approve(orderId);
+          console.log(`SANDBOX: Order ${orderId} auto-approve paid`);
+          orderData.paymentStatus = 'paid';
+          orderData.status = 'processing'; // sinkron dengan filter di app
+        } catch (err) {
+          console.error('Gagal auto-approve sandbox:', err.message);
+        }
+      }
     }
 
-    await db.collection('orders').doc(orderId).set({
+    // --- Simpan order ---
+    const orderDocToPersist = {
       ...orderData,
       midtransToken,
       midtransRedirectUrl,
-    });
+      updatedAt: admin.firestore.Timestamp.now(),
+    };
 
-    // Hapus carts (tetap seperti kode kamu sebelumnya) ...
+    await db.collection('orders').doc(orderId).set(orderDocToPersist);
+
+    // --- Hapus item carts user yang sudah jadi order ---
     const batch = db.batch();
     for (const cartItem of carts) {
       if (!cartItem.cartId) continue;
@@ -170,17 +189,37 @@ const createOrderHandler = async (request, h) => {
     }
     await batch.commit();
 
-    return h.response({
-      status: 'success',
-      message: 'Order berhasil dibuat',
-      data: { orderId, midtransToken, midtransRedirectUrl }
-    }).code(201);
+    // --- 🔔 KABARI ADMIN: pesanan baru (DATA-ONLY FCM) ---
+    // gunakan versi minimal yang dibutuhkan notifikasi admin
+    const orderDocForNotify = {
+      orderId,
+      userId,
+      carts,
+      totalPrice: orderData.totalPrice,
+      customer: orderData.customer,
+    };
 
+    notifyAdminsNewOrder(orderDocForNotify).catch((e) =>
+      console.error('notifyAdminsNewOrder error:', e)
+    );
+
+    // --- Response ke client ---
+    return h
+      .response({
+        status: 'success',
+        message: 'Order berhasil dibuat',
+        data: { orderId, midtransToken, midtransRedirectUrl },
+      })
+      .code(201);
   } catch (error) {
     console.error('Error createOrderHandler:', error);
-    return h.response({ status: 'fail', message: error.message }).code(500);
+    return h
+      .response({ status: 'fail', message: error.message })
+      .code(500);
   }
 };
+
+module.exports = { createOrderHandler };
 
 
 // ========== MIDTRANS NOTIFICATION ==========
