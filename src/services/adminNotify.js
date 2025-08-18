@@ -93,6 +93,13 @@ async function notifyAdminsNewOrder(order) {
 
   const res = await sendToTokens(tokens, payload);
   console.log('[ADMIN NOTIFY] sent:', res.successCount, 'ok,', res.failureCount, 'fail');
+  // Tambah ini:
+    if (res.responses?.length) {
+    res.responses.forEach((r, i) => {
+        const status = r.success ? 'OK' : `FAIL (${r.error?.code || r.error?.errorInfo?.code || r.error?.message})`;
+        console.log(`[ADMIN NOTIFY] token[${i}]=${tokens[i].slice(0,12)}… -> ${status}`);
+    });
+    }
 
   // Bersihkan token invalid
   if (res.responses?.length) {
