@@ -61,6 +61,9 @@ const createOrderHandler = async (request, h) => {
       paymentMethod,
       deliveryMethod,
       customer, // <- abaikan dari client; kita override dari Firestore
+      deliveryLat, 
+      deliveryLng,
+
     } = request.payload || {};
 
     if (!userId || !Array.isArray(carts) || carts.length === 0) {
@@ -134,6 +137,9 @@ const createOrderHandler = async (request, h) => {
         normalizedPaymentMethod === 'midtrans' ? 'pending' : 'waiting_payment',
       createdAt: admin.firestore.Timestamp.now(),
       customer: customerFromFirestore || (customer ?? null),
+      // simpan koordinat hanya jika delivery
+      deliveryLat: deliveryMethod?.toLowerCase() === 'delivery' ? deliveryLat ?? null : null,
+      deliveryLng: deliveryMethod?.toLowerCase() === 'delivery' ? deliveryLng ?? null : null,
     };
 
     // --- Midtrans (opsional, tergantung paymentMethod) ---
