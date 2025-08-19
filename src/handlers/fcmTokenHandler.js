@@ -1,10 +1,12 @@
 // handlers/fcmTokenHandler.js
-const { db, admin } = require('../services/firebaseService'); // ⬅️ perbaiki import
+const { db, admin } = require('../services/firebaseService');
 
 async function saveFcmTokenHandler(request, h) {
   const { userId } = request.params;
   const { token } = request.payload || {};
-  if (!token) return h.response({ status: 'fail', message: 'token required' }).code(400);
+  if (!token) return h.response({ status:'fail', message:'token required' }).code(400);
+
+  console.log('[FCM] SAVE token for user=', userId, 'len=', token.length);
 
   await db.collection('user_fcm_tokens').doc(userId).set(
     {
@@ -20,7 +22,9 @@ async function saveFcmTokenHandler(request, h) {
 async function deleteFcmTokenHandler(request, h) {
   const { userId } = request.params;
   const { token } = request.payload || {};
-  if (!token) return h.response({ status: 'fail', message: 'token required' }).code(400);
+  if (!token) return h.response({ status:'fail', message:'token required' }).code(400);
+
+  console.log('[FCM] DELETE token for user=', userId);
 
   await db.collection('user_fcm_tokens').doc(userId).set(
     {

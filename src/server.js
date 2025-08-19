@@ -46,7 +46,13 @@ const init = async () => {
   ...testRoutes
 ]);
 
-    server.route(fcmRoutes);     
+    server.route(fcmRoutes); 
+    console.log('[ROUTES] mounted fcmRoutes:', fcmRoutes.length);
+setTimeout(() => {
+  console.log('[ROUTES] list:');
+  server.table().forEach(r => console.log(r.method.toUpperCase(), r.path));
+}, 500);
+    
     await server.start();
     console.log(`✅ Server running at: ${server.info.uri}`);
     console.log('🔐 Midtrans Key:', process.env.MIDTRANS_SERVER_KEY);
