@@ -10,6 +10,9 @@ const {
   updateBuketImageHandler,
   createReviewHandler,
   listBuketReviewsNoIndex,   // << pakai no-index
+  // [ADD]
+  upsertCustomBuketHandler,
+  updateCustomImageHandler,
 } = require('../handlers/buketHandler');
 
 module.exports = [
@@ -169,4 +172,57 @@ module.exports = [
     },
     handler: listBuketReviewsNoIndex,
   },
+
+    // === [ADD] Upsert buket CUSTOM (dokumen id: 'CUSTOM')
+  {
+    method: 'PUT',
+    path: '/buket/custom',
+    options: {
+      tags: ['api'],
+      description: 'Upsert dokumen buket khusus CUSTOM (id tetap "CUSTOM")',
+      validate: {
+        payload: Joi.object({
+          name: Joi.string().optional(),
+          image_url: Joi.string().uri().optional(),
+          base_price_by_size: Joi.object({
+            small: Joi.number().integer().min(0).optional(),
+            medium: Joi.number().integer().min(0).optional(),
+            large: Joi.number().integer().min(0).optional(),
+          }).optional(),
+          service_price: Joi.number().integer().min(0).optional(),
+          processing_time: Joi.alternatives().try(Joi.string(), Joi.number()).optional(),
+          requires_photo: Joi.boolean().optional(),     // default false
+          is_customizable: Joi.boolean().optional(),    // default true
+          category: Joi.string().optional(),            // default 'Custom'
+        }),
+        failAction: (_r, _h, err) => { console.error('[CUSTOM] VALIDATION ERROR:', err.message); throw err; },
+      },
+    },
+    handler: upsertCustomBuketHandler,
+  },
+
+  // === [ADD] Update gambar khusus CUSTOM
+  {
+    method: 'PUT',
+    path: '/buket/custom/image',
+    options: {
+      tags: ['api'],
+      description: 'Update gambar untuk buket CUSTOM',
+      payload: {
+        output: 'stream',
+        parse: true,
+        allow: 'multipart/form-data',
+        multipart: true,
+        maxBytes: 5 * 1024 * 1024,
+      },
+      validate: {
+        payload: Joi.object({
+          image: Joi.any().meta({ swaggerType: 'file' }).required(),
+        }),
+        failAction: (_r, _h, err) => { console.error('[CUSTOM] VALIDATION ERROR:', err.message); throw err; },
+      },
+    },
+    handler: updateCustomImageHandler,
+  },
+
 ];

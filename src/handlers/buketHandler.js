@@ -413,6 +413,141 @@ const listBuketReviewsNoIndex = async (request, h) => {
   }
 };
 
+
+//custom
+
+// === [ADD] Util kecil untuk map size ===
+const toInt = (v, d = 0) => Number.isFinite(Number(v)) ? Number(v) : d;
+const ensureSmlMap = (src = {}, fallback = { small: 0, medium: 0, large: 0 }) => {
+  const out = { ...fallback };
+  ['small', 'medium', 'large'].forEach(k => {
+    const v = src?.[k];
+    out[k] = Number.isFinite(Number(v)) ? Number(v) : (fallback[k] ?? 0);
+  });
+  return out;
+};
+
+// === [ADD] Upsert dokumen buket CUSTOM (id tetap 'CUSTOM')
+const upsertCustomBuketHandler = async (request, h) => {
+  try {
+    const {
+      name,
+      image_url,
+      base_price_by_size,     // {small, medium, large} (number) - optional
+      service_price,          // number - optional
+      processing_time,        // number/string - optional
+      requires_photo,         // boolean - optional (default false)
+      is_customizable,        // boolean - optional (default true)
+      category,               // string - optional (default 'Custom')
+    } = request.payload || {};
+
+    const ref = db.collection('buket').doc('CUSTOM');
+    const snap = await ref.get();
+    const prev = snap.exists ? (snap.data() || {}) : {};
+
+    // siapkan nilai final (pakai yang baru kalau dikirim; fallback ke sebelumnya)
+    const finalName = (name ?? prev.name ?? 'Buket Custom');
+    const finalCategory = (category ?? prev.category ?? 'Custom');
+    const finalType = 'custom';
+    const finalIsCustomizable = (typeof is_customizable === 'boolean') ? is_customizable : (prev.is_customizable ?? true);
+    const finalRequiresPhoto = (typeof requires_photo === 'boolean') ? requires_photo : (prev.requires_photo ?? false);
+    const finalProcessing = Number.isFinite(Number(processing_time)) ? parseInt(processing_time, 10) : (prev.processing_time ?? 1);
+
+    const baseMap = ensureSmlMap(base_price_by_size, prev.base_price_by_size || { small: 0, medium: 0, large: 0 });
+    const svc = Number.isFinite(Number(service_price)) ? parseInt(service_price, 10) : (prev.service_price ?? 0);
+    const totalMap = {
+      small: (baseMap.small || 0) + svc,
+      medium: (baseMap.medium || 0) + svc,
+      large: (baseMap.large || 0) + svc,
+    };
+
+    const payloadToSet = {
+      buketId: 'CUSTOM',
+      name: finalName,
+      category: finalCategory,
+      type: finalType,
+      is_customizable: finalIsCustomizable,
+      requires_photo: finalRequiresPhoto,
+      processing_time: finalProcessing,
+      service_price: svc,
+      base_price_by_size: baseMap,
+      total_price_by_size: totalMap,
+      updated_at: new Date().toISOString(),
+    };
+
+    // image_url kalau dikirim → set; kalau tidak, biarkan nilai sebelumnya
+    if (typeof image_url === 'string' && image_url.trim().length > 0) {
+      payloadToSet.image_url = image_url.trim();
+    } else if (!snap.exists) {
+      // jika dokumen baru dan tidak ada image_url -> set kosong agar konsisten
+      payloadToSet.image_url = '';
+    }
+
+    // rating: pertahankan yang lama bila ada; kalau belum ada, inisialisasi
+    if (!prev.rating) {
+      payloadToSet.rating = { average: 0, count: 0 };
+    }
+
+    // created_at hanya saat pertama kali
+    if (!snap.exists) {
+      payloadToSet.created_at = new Date().toISOString();
+    }
+
+    await ref.set(payloadToSet, { merge: true });
+
+    return h.response({ status: 'success', message: 'CUSTOM disimpan', data: { ...prev, ...payloadToSet } }).code(200);
+  } catch (err) {
+    console.error('[BUKET] upsertCustomBuketHandler error:', err);
+    return h.response({ status: 'fail', message: 'Gagal menyimpan CUSTOM', error: err.message }).code(500);
+  }
+};
+
+// === [ADD] Update gambar khusus dokumen CUSTOM (multipart/form-data: image)
+const updateCustomImageHandler = async (_request, h) => {
+  try {
+    const image = _request.payload?.image;
+    if (!image) {
+      return h.response({ status: 'fail', message: 'File image wajib' }).code(400);
+    }
+
+    // stream → buffer
+    const buffer = await new Promise((resolve, reject) => {
+      const chunks = [];
+      image.on('data', (c) => chunks.push(c));
+      image.on('end', () => resolve(Buffer.concat(chunks)));
+      image.on('error', reject);
+    });
+
+    // upload ke Cloudinary
+    const uploadStream = () =>
+      new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: 'buket', resource_type: 'image' },
+          (error, result) => (error ? reject(error) : resolve(result))
+        );
+        streamifier.createReadStream(buffer).pipe(stream);
+      });
+
+    const result = await uploadStream();
+
+    await db.collection('buket').doc('CUSTOM').set({
+      image_url: result.secure_url,
+      updated_at: new Date().toISOString(),
+      buketId: 'CUSTOM',
+      type: 'custom',
+      category: 'Custom',
+      is_customizable: true,
+      requires_photo: false,
+    }, { merge: true });
+
+    log('update-image CUSTOM');
+    return h.response({ status: 'success', message: 'Gambar CUSTOM diperbarui', image_url: result.secure_url }).code(200);
+  } catch (err) {
+    console.error('[BUKET] updateCustomImageHandler error:', err);
+    return h.response({ status: 'fail', message: 'Gagal memperbarui gambar CUSTOM', error: err.message }).code(500);
+  }
+};
+
 module.exports = {
   // buket
   createBuketHandler,
@@ -421,6 +556,10 @@ module.exports = {
   updateBuketHandler,
   deleteBuketHandler,
   updateBuketImageHandler,
+
+  // [ADD] custom-only
+  upsertCustomBuketHandler,
+  updateCustomImageHandler,
 
   // reviews
   createReviewHandler,
