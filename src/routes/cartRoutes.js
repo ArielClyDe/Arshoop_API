@@ -4,6 +4,9 @@ const Joi = require('joi');
 const cartHandler = require('../handlers/cartHandler');
 
 module.exports = [
+  /* =========================
+   * POST /cart  (Add to cart)
+   * ========================= */
   {
     method: 'POST',
     path: '/cart',
@@ -14,10 +17,15 @@ module.exports = [
         payload: Joi.object({
           userId: Joi.string().required(),
           buketId: Joi.string().required(),
+
           name: Joi.string().optional(),
-          imageUrl: Joi.string().uri().optional(),
+
+          // ⬇️ Izinkan kosong/null untuk kasus custom (tidak wajib ada foto buket)
+          imageUrl: Joi.string().uri().allow('', null).optional(),
+
           size: Joi.string().valid('small', 'medium', 'large').required(),
           quantity: Joi.number().integer().min(1).required(),
+
           basePrice: Joi.number().integer().min(0).optional(),
 
           customMaterials: Joi.array().items(
@@ -25,7 +33,7 @@ module.exports = [
               materialId: Joi.string().required(),
               name: Joi.string().optional(),
               price: Joi.number().integer().min(0).optional(),
-              quantity: Joi.number().integer().min(1).required()
+              quantity: Joi.number().integer().min(1).required(),
             })
           ).optional(),
 
@@ -33,15 +41,21 @@ module.exports = [
           orderNote: Joi.string().optional().allow(''),
           totalPrice: Joi.number().integer().min(0).optional(),
 
-          // ✅ baru
+          // daftar URL foto user (opsional)
           photoUrls: Joi.array().items(Joi.string().uri()).default([]),
         }),
-        failAction: (_r, _h, err) => { console.error('[CART] validation(POST):', err.message); throw err; }
-      }
+        failAction: (_r, _h, err) => {
+          console.error('[CART] validation(POST):', err.message);
+          throw err;
+        },
+      },
     },
     handler: cartHandler.addToCartHandler,
   },
 
+  /* ==========================================
+   * GET /cart/{userId}  (List cart by userId)
+   * ========================================== */
   {
     method: 'GET',
     path: '/cart/{userId}',
@@ -52,12 +66,18 @@ module.exports = [
         params: Joi.object({
           userId: Joi.string().required(),
         }),
-        failAction: (_r, _h, err) => { console.error('[CART] validation(GET):', err.message); throw err; }
+        failAction: (_r, _h, err) => {
+          console.error('[CART] validation(GET):', err.message);
+          throw err;
+        },
       },
     },
     handler: cartHandler.getCartByUserHandler,
   },
 
+  /* =======================================
+   * DELETE /cart/{cartId}  (Remove an item)
+   * ======================================= */
   {
     method: 'DELETE',
     path: '/cart/{cartId}',
@@ -68,12 +88,18 @@ module.exports = [
         params: Joi.object({
           cartId: Joi.string().required(),
         }),
-        failAction: (_r, _h, err) => { console.error('[CART] validation(DELETE):', err.message); throw err; }
+        failAction: (_r, _h, err) => {
+          console.error('[CART] validation(DELETE):', err.message);
+          throw err;
+        },
       },
     },
     handler: cartHandler.deleteCartItemHandler,
   },
 
+  /* ==========================================
+   * PUT /cart/{cartId}  (Update existing item)
+   * ========================================== */
   {
     method: 'PUT',
     path: '/cart/{cartId}',
@@ -91,7 +117,7 @@ module.exports = [
               materialId: Joi.string().required(),
               quantity: Joi.number().integer().min(1).required(),
               name: Joi.string().optional(),
-              price: Joi.number().integer().min(0).optional()
+              price: Joi.number().integer().min(0).optional(),
             })
           ),
 
@@ -99,12 +125,18 @@ module.exports = [
           orderNote: Joi.string().optional().allow(''),
           totalPrice: Joi.number().integer().min(0),
 
-          // ✅ baru: kalau dikirim, REPLACE daftar foto
+          // ⬇️ jika ingin bisa update gambar cart, boleh ikutkan field ini:
+          imageUrl: Joi.string().uri().allow('', null),
+
+          // jika dikirim: REPLACE daftar foto user untuk item ini
           photoUrls: Joi.array().items(Joi.string().uri()),
         }).min(1),
-        failAction: (_r, _h, err) => { console.error('[CART] validation(PUT):', err.message); throw err; }
-      }
+        failAction: (_r, _h, err) => {
+          console.error('[CART] validation(PUT):', err.message);
+          throw err;
+        },
+      },
     },
-    handler: cartHandler.updateCartItemHandler
-  }
+    handler: cartHandler.updateCartItemHandler,
+  },
 ];
