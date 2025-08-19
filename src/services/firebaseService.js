@@ -1,6 +1,7 @@
 // services/firebaseService.js
 const admin = require('firebase-admin');
 require('dotenv').config();
+console.log('[FIREBASE] projectId=', admin.app().options.projectId);
 
 const serviceAccount = {
   type: process.env.FIREBASE_TYPE,
