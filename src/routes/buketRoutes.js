@@ -147,11 +147,18 @@ module.exports = [
       validate: {
         params: Joi.object({ buketId: Joi.string().required() }),
         payload: Joi.object({
-          user_id: Joi.string().required(),       // wajib untuk anti-duplicate
-          reviewer_name: Joi.string().allow('', null),
-          rating: Joi.number().integer().min(1).max(5).required(),
-          comment: Joi.string().allow('', null),
-        }),
+      user_id: Joi.string().required(),       // wajib untuk anti-duplicate
+       reviewer_name: Joi.string().allow('', null),
+       rating: Joi.number().integer().min(1).max(5).required(),
+       comment: Joi.string().allow('', null),
+      // === tambahkan ini: client boleh kirim flag anonim ===
+       is_anonymous: Joi.boolean().optional(),
+       // opsional: dukung klien lama yg kirim show_name (false => anonim)
+       show_name: Joi.alternatives().try(
+         Joi.boolean(),
+         Joi.string().valid('true','false')
+       ).optional(),
+     }).unknown(false), // tetap tolak key selain yg disebutkan
         failAction: (_r, _h, err) => { console.error('[REVIEWS] VALIDATION ERROR:', err.message); throw err; },
       },
     },
