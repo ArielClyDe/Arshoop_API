@@ -3,18 +3,30 @@ const { admin, db } = require('../services/firebaseService');
 const { sendToTokens } = require('../services/fcmService');
 
 const STATUS_TEXT = {
-  pending:   'Pesanan menunggu konfirmasi',
-  processing:'Pesanan sedang diproses',
-  shipping:  'Pesanan sedang dikirim',
-  delivered: 'Pesanan sudah diterima',
-  done:      'Pesanan selesai',
-  completed: 'Pesanan selesai',
-  canceled:  'Pesanan dibatalkan',
+  pending:    'Pesanan menunggu konfirmasi',
+  processing: 'Pesanan sedang diproses',
+  shipping:   'Pesanan sedang dikirim',
+  delivered:  'Pesanan sudah diterima',
+  done:       'Pesanan selesai',
+  completed:  'Pesanan selesai',
+  canceled:   'Pesanan dibatalkan',
 };
+
+function normStatus(s = '') {
+  const v = String(s).toLowerCase().trim();
+  if (['process','processing','diproses'].includes(v)) return 'processing';
+  if (['shipping','shipped','dikirim'].includes(v))   return 'shipping';
+  if (['delivered','terkirim'].includes(v))           return 'delivered';
+  if (['done','completed','selesai'].includes(v))     return 'done';
+  if (['canceled','cancelled','batal'].includes(v))   return 'canceled';
+  if (['pending','menunggu'].includes(v))             return 'pending';
+  return 'pending';
+}
 
 async function updateOrderStatusHandler(request, h) {
   const { orderId } = request.params;
-  const { status }  = request.payload || {};
+  const s0 = request?.payload?.status || 'pending';
+  const status = normStatus(s0);
 
   const ref  = db.collection('orders').doc(orderId);
   const snap = await ref.get();
@@ -22,7 +34,7 @@ async function updateOrderStatusHandler(request, h) {
     return h.response({ status: 'fail', message: 'Order not found' }).code(404);
   }
 
-  const order = snap.data();
+  const order = snap.data() || {};
   await ref.update({ status, updated_at: new Date().toISOString() });
 
   // ambil token milik user
@@ -33,18 +45,19 @@ async function updateOrderStatusHandler(request, h) {
   if (tokens.length) {
     const carts = Array.isArray(order.carts) ? order.carts : [];
 
-    // ringkas nama item agar payload kecil
     const MAX_ITEMS = 5;
     const MAX_NAME_LEN = 40;
     const namesAll = carts
       .map(it => (it?.name || '').trim())
       .filter(Boolean)
       .map(s => (s.length > MAX_NAME_LEN ? s.slice(0, MAX_NAME_LEN) + '…' : s));
-
     const namesTop = namesAll.slice(0, MAX_ITEMS);
     const more = Math.max(namesAll.length - namesTop.length, 0);
 
     const customerName = order?.customer?.name || '';
+
+    const title = 'Status Pesanan Diperbarui';
+    const body  = `${customerName || 'Pesanan'} • ${STATUS_TEXT[status] || `Status: ${status}`}`;
 
     const payload = {
       data: {
@@ -57,10 +70,18 @@ async function updateOrderStatusHandler(request, h) {
         items_more: String(more),
 
         // dipakai client sbg judul & collapsed text
-        _title: 'Status Pesanan Diperbarui',
-        _body:  STATUS_TEXT[status] || `Status: ${status}`,
+        _title: title,
+        _body:  body,
       },
-      android: { priority: 'high' }, // penting utk bg delivery
+      // ✅ penting utk bg delivery & menimpa notif lama
+      android: {
+        priority: 'high',
+        ttl: 24 * 60 * 60 * 1000, // 24 jam
+        collapseKey: String(orderId),
+        notification: { channelId: 'order_updates', tag: String(orderId) },
+      },
+      // ✅ Fallback agar tidak blank saat app mati
+      notification: { title, body },
     };
 
     const res = await sendToTokens(tokens, payload);

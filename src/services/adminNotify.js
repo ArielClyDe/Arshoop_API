@@ -5,9 +5,7 @@ const { sendToTokens } = require('./fcmService');
 // status pembayaran yang dianggap sukses
 const PAID_OK = new Set(['paid', 'settlement', 'capture_accept', 'capture-accept']);
 
-/**
- * Ambil semua userId yang berperan admin.
- */
+/** Ambil semua userId yang berperan admin. */
 async function getAdminUserIds() {
   const ROLE_VALUES = ['admin', 'Admin', 'ADMIN'];
   try {
@@ -28,9 +26,7 @@ async function getAdminUserIds() {
   return envList;
 }
 
-/**
- * Ambil FCM token untuk list user.
- */
+/** Ambil FCM token untuk list user. */
 async function getTokensForUsers(userIds = []) {
   if (!userIds.length) return [];
   const refs = userIds.map(uid => db.collection('user_fcm_tokens').doc(uid));
@@ -77,9 +73,12 @@ async function notifyAdminsNewOrder(order, opts = {}) {
   const namesTop = namesAll.slice(0, MAX_ITEMS);
   const more = Math.max(namesAll.length - namesTop.length, 0);
 
-  const customerName = order?.customer?.name || order?.userId || '';
+  const customerName = order?.customer?.name || order?.userId || 'Pelanggan';
   const totalPrice   = String(order?.totalPrice ?? '');
   const androidTag   = `admin_order_${order.orderId}`;
+
+  const title = `Pesanan Baru #${order.orderId}`;
+  const body  = `${customerName} • Total Rp ${totalPrice}`;
 
   const payload = {
     data: {
@@ -89,15 +88,17 @@ async function notifyAdminsNewOrder(order, opts = {}) {
       total_price: totalPrice,
       items_json: JSON.stringify(namesTop),
       items_more: String(more),
-      _title: `Pesanan Baru #${order.orderId}`,
-      _body:  `${customerName || 'Pelanggan'} • Total Rp ${totalPrice}`,
+      _title: title,
+      _body:  body,
     },
     android: {
       priority: 'high',
+      ttl: 24 * 60 * 60 * 1000,
       collapseKey: String(order.orderId),
       notification: { channelId: 'admin_orders', tag: androidTag },
-      ttl: 60 * 60 * 1000,
     },
+    // ✅ fallback agar tidak blank saat app mati
+    notification: { title, body },
   };
 
   const res = await sendToTokens(tokens, payload);
