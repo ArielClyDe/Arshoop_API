@@ -35,4 +35,6 @@ module.exports = [
 
   // ⬇️⬇️ baru: download ZIP semua foto pada order
   { method: 'GET', path: '/orders/{orderId}/photos.zip', handler: downloadOrderPhotosZip },
+  
+  { method: 'PATCH', path: '/orders/{orderId}/payment-status', handler: updatePaymentStatusHandler },
 ];

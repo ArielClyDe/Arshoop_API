@@ -490,6 +490,40 @@ const downloadOrderPhotosZip = async (request, h) => {
     .type('application/zip')
     .header('Content-Disposition', `attachment; filename="order_${orderId}_photos.zip"`);
 };
+// handlers/orderHandler.js
+const updatePaymentStatusHandler = async (request, h) => {
+  try {
+    const { orderId } = request.params;
+    const { paymentStatus } = request.payload || {};
+    const ps = String(paymentStatus || '').toLowerCase();
+
+    if (!['paid','pending','waiting_payment','failed','challenge'].includes(ps)) {
+      return h.response({ status:'fail', message:'paymentStatus tidak valid' }).code(400);
+    }
+
+    const ref = db.collection('orders').doc(orderId);
+    const snap = await ref.get();
+    if (!snap.exists) return h.response({ status:'fail', message:'Order tidak ditemukan' }).code(404);
+
+    const order = snap.data() || {};
+    if ((order.paymentMethod || '').toLowerCase() !== 'cod') {
+      return h.response({ status:'fail', message:'Hanya boleh ubah paymentStatus untuk COD' }).code(400);
+    }
+
+    const update = { paymentStatus: ps, updatedAt: new Date().toISOString() };
+    await ref.update(update);
+
+    // opsional: kabari user/admin
+    try {
+      await notifyUserOrderUpdate({ order: { ...order, ...update } });
+    } catch (e) { console.error('notify user (payment-status) error:', e); }
+
+    return h.response({ status:'success', message:`Payment status order ${orderId} -> ${ps}` }).code(200);
+  } catch (err) {
+    console.error('Error updatePaymentStatusHandler:', err);
+    return h.response({ status:'fail', message: err.message }).code(500);
+  }
+};
 
 module.exports = {
   createOrderHandler,
@@ -499,5 +533,6 @@ module.exports = {
   getOrderDetailHandler,
   updateOrderStatusByPathHandler,
   updateOrderStatusLegacyHandler,
+  updatePaymentStatusHandler,
   downloadOrderPhotosZip,
 };
