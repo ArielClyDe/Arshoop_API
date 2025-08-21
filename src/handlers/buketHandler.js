@@ -268,18 +268,38 @@ async function recalcRatingSummary(buketId) {
 
 const createReviewHandler = async (request, h) => {
   const { buketId } = request.params;
-  const { user_id, reviewer_name, rating, comment } = request.payload || {};
+
+  // +++ ambil flag anonim; dukung dua gaya: is_anonymous atau show_name +++
+  const {
+    user_id,
+    reviewer_name,
+    rating,
+    comment,
+    is_anonymous,   // opsional: true/false
+    show_name       // opsional: true/false → kalau false berarti anonim
+  } = request.payload || {};
+
   logR('POST /buket/%s/reviews user=%s rating=%s', buketId, user_id, rating);
 
   if (!buketId) return h.response({ status: 'fail', message: 'buketId wajib diisi.' }).code(400);
   if (!user_id) return h.response({ status: 'fail', message: 'user_id wajib diisi.' }).code(400);
+
   const rate = parseInt(rating, 10);
   if (!(rate >= 1 && rate <= 5)) {
     return h.response({ status: 'fail', message: 'rating harus 1..5' }).code(400);
   }
 
+  // +++ normalisasi pilihan anonim +++
+  const isAnon =
+    typeof is_anonymous === 'boolean'
+      ? is_anonymous
+      : (show_name === false || show_name === 'false'); // fallback jika klien kirim show_name
+
+  // nama yang akan ditampilkan di list
+  const displayName = isAnon ? 'Anonymous' : (reviewer_name || 'User');
+
   try {
-    // 1) Buket ada?
+    // 1) cek buket
     const buketRef = db.collection('buket').doc(buketId);
     const buketDoc = await buketRef.get();
     if (!buketDoc.exists) {
@@ -287,7 +307,7 @@ const createReviewHandler = async (request, h) => {
       return h.response({ status: 'fail', message: 'Buket tidak ditemukan.' }).code(404);
     }
 
-    // 2) Anti-duplikat TANPA index: ambil semua review buket ini → filter user di memory
+    // 2) anti-duplikat
     const dupSnap = await db.collection('buket_reviews')
       .where('buketId', '==', buketId)
       .get();
@@ -300,7 +320,7 @@ const createReviewHandler = async (request, h) => {
       return h.response({ status: 'fail', message: 'Anda sudah memberikan review untuk buket ini.' }).code(409);
     }
 
-    // 3) Validasi user pernah order buket ini & status selesai (opsional, boleh hapus jika belum perlu)
+    // 3) validasi user pernah order & selesai
     const doneStatuses = ['delivered', 'done', 'completed'];
     const ordersSnap = await db.collection('orders')
       .where('userId', '==', user_id)
@@ -318,21 +338,24 @@ const createReviewHandler = async (request, h) => {
       return h.response({ status: 'fail', message: 'Review hanya setelah pesanan selesai.' }).code(403);
     }
 
-    // 4) Simpan review (pakai serverTimestamp agar konsisten)
+    // 4) simpan review
     const reviewId = nanoid(16);
     const reviewData = {
       reviewId,
       buketId,
       userId: user_id,
-      reviewer_name: reviewer_name || 'User',
+      reviewer_name: reviewer_name || null, // disimpan kalau dikirim (tidak ditampilkan bila anonim)
+      display_name: displayName,            // << ini yang dipakai di list
+      is_anonymous: !!isAnon,               // << flag pilihan user
       rating: rate,
       comment: comment || null,
       created_at: FieldValue.serverTimestamp(),
     };
+
     await db.collection('buket_reviews').doc(reviewId).set(reviewData);
     logR('insert reviewId=%s', reviewId);
 
-    // 5) Recalc summary dan simpan di dok buket
+    // 5) update ringkasan
     const { average, count } = await recalcRatingSummary(buketId);
     await buketRef.update({
       rating: { average, count },
@@ -340,7 +363,7 @@ const createReviewHandler = async (request, h) => {
     });
     logR('summary updated avg=%s count=%s', average, count);
 
-    // Balikkan created_at sebagai ISO (optional normalisasi)
+    // respon
     const nowIso = new Date().toISOString();
     return h.response({
       status: 'success',
@@ -352,6 +375,7 @@ const createReviewHandler = async (request, h) => {
     return h.response({ status: 'fail', message: 'Gagal menyimpan review', error: err.message }).code(500);
   }
 };
+
 
 // ======= GET reviews TANPA INDEX: where(buketId) lalu sort di memory =======
 const listBuketReviewsNoIndex = async (request, h) => {
@@ -373,26 +397,34 @@ const listBuketReviewsNoIndex = async (request, h) => {
       .get();
 
     let reviews = snap.docs.map((d) => {
-      const x = d.data();
-      // Normalisasi timestamp → ISO string
-      let createdAtIso = new Date(0).toISOString();
-      const ca = x.created_at;
-      if (ca?.toDate) createdAtIso = ca.toDate().toISOString();
-      else if (ca?.toMillis) createdAtIso = new Date(ca.toMillis()).toISOString();
-      else if (typeof ca === 'string') {
-        const t = new Date(ca);
-        createdAtIso = isNaN(t) ? new Date(0).toISOString() : t.toISOString();
-      }
-      return {
-        reviewId: x.reviewId || d.id,
-        buketId: x.buketId,
-        userId: x.userId || x.user_id || null,
-        reviewer_name: x.reviewer_name || x.reviewerName || null,
-        rating: x.rating || 0,
-        comment: x.comment || null,
-        created_at: createdAtIso,
-      };
-    });
+  const x = d.data();
+  // Normalisasi timestamp → ISO string
+  let createdAtIso = new Date(0).toISOString();
+  const ca = x.created_at;
+  if (ca?.toDate) createdAtIso = ca.toDate().toISOString();
+  else if (ca?.toMillis) createdAtIso = new Date(ca.toMillis()).toISOString();
+  else if (typeof ca === 'string') {
+    const t = new Date(ca);
+    createdAtIso = isNaN(t) ? new Date(0).toISOString() : t.toISOString();
+  }
+
+  // Tentukan nama yang ditampilkan
+  const disp = x.display_name
+    || (x.is_anonymous ? 'Anonymous' : (x.reviewer_name || x.reviewerName || 'User'));
+
+  return {
+    reviewId: x.reviewId || d.id,
+    buketId: x.buketId,
+    userId: x.userId || x.user_id || null,
+    reviewer_name: x.reviewer_name || x.reviewerName || null, // data mentah (opsional)
+    display_name: disp,                                        // << pakai ini di UI
+    is_anonymous: !!x.is_anonymous,
+    rating: x.rating || 0,
+    comment: x.comment || null,
+    created_at: createdAtIso,
+  };
+});
+
 
     // Sort desc by created_at (di memory), lalu batasi limit
     reviews.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
