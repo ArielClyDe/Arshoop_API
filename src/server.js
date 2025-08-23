@@ -8,6 +8,8 @@ const cartRoutes = require('./routes/cartRoutes');
 const materialRoutes = require('./routes/materialRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const testRoutes = require('./routes/testRoutes');
+const authRoutes = require('./routes/authRoutes');
+const userAdminRoutes = require('./routes/userAdminRoutes');
 
 const fcmRoutes = require('./routes/fcmRoutes');
 
@@ -43,7 +45,8 @@ const init = async () => {
   ...cartRoutes,
   ...materialRoutes,
   ...orderRoutes,
-  ...testRoutes
+  ...testRoutes,
+  ...userAdminRoutes,
 ]);
 
     server.route(fcmRoutes); 
