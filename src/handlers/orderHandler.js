@@ -262,6 +262,7 @@ const midtransNotificationHandler = async (request, h) => {
 };
 
 // ========== ADMIN: GET SEMUA ORDER ==========
+// ========== ADMIN: GET SEMUA ORDER ==========
 const getAllOrdersAdminHandler = async (request, h) => {
   try {
     const { status, paymentStatus, userId, limit = 25 } = request.query || {};
@@ -273,16 +274,33 @@ const getAllOrdersAdminHandler = async (request, h) => {
 
     const snap = await ref.get();
 
+    // Bentuk baris + normalisasi userId agar aman (dukung field lama user_id)
     let rows = snap.docs.map(d => {
-      const x = d.data();
-      return { id: d.id, ...x, createdAt: toIso(x.createdAt) };
+      const x = d.data() || {};
+      const userIdSafe =
+        (typeof x.userId === 'string' && x.userId.trim()) ? x.userId.trim() :
+        (typeof x.user_id === 'string' && x.user_id.trim()) ? x.user_id.trim() :
+        null;
+
+      return {
+        id: d.id,
+        ...x,
+        userId: userIdSafe,
+        createdAt: toIso(x.createdAt),
+      };
     });
 
-    rows = rows.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
-               .slice(0, Number(limit));
+    // Urut & batasi
+    rows = rows
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, Number(limit));
 
-    const missing = rows.filter(r => !r.customer || !r.customer.name).map(r => r.userId);
-    const uniqueUserIds = Array.from(new Set(missing));
+    // Enrich customer hanya untuk order yang customer-nya kosong & userId valid
+    const candidateUserIds = rows
+      .filter(r => (!r.customer || !r.customer.name) && typeof r.userId === 'string' && r.userId.trim() !== '')
+      .map(r => r.userId.trim());
+
+    const uniqueUserIds = Array.from(new Set(candidateUserIds));
 
     if (uniqueUserIds.length > 0) {
       const userDocs = await Promise.all(
@@ -294,17 +312,19 @@ const getAllOrdersAdminHandler = async (request, h) => {
         if (doc.exists) {
           const u = doc.data() || {};
           userMap[uid] = {
-            name:  u.name || 'User',
+            name:  u.name  || 'User',
             email: u.email || 'user@example.com',
-            phone: u.no_telp || ''
+            phone: u.no_telp || '',
           };
         }
       });
 
       rows = rows.map(r => {
         if (!r.customer || !r.customer.name) {
-          const cu = userMap[r.userId];
+          const cu = r.userId ? userMap[r.userId] : null;
           if (cu) return { ...r, customer: cu };
+          // fallback aman supaya UI nggak pecah walau userId null/ga ketemu
+          return { ...r, customer: { name: 'User', email: 'user@example.com', phone: '' } };
         }
         return r;
       });
@@ -316,6 +336,7 @@ const getAllOrdersAdminHandler = async (request, h) => {
     return h.response({ message: 'Gagal mengambil data order' }).code(500);
   }
 };
+
 
 // ========== USER: GET ORDER MILIKNYA ==========
 const getOrdersByUserHandler = async (request, h) => {
